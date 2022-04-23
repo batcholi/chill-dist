@@ -1,0 +1,4 @@
+0 raytracing.rgen
+0 raytracing.primary.rmiss
+0 raytracing.default.primary.rint
+0 raytracing.default.primary.rchit
