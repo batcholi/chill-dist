@@ -1,19 +1,19 @@
-echo WATCHING: "/home/jack/chill/build/debug/game/assets/shaders/ui/box.meta"
+echo WATCHING: "/home/olivier/projects/chill/build/debug/game/assets/shaders/ui/box.meta"
 inotifywait -e modify \
-  '/home/jack/chill/src/v4d/game/assets/shaders/ui/box.glsl'\
-  '/home/jack/chill/src/v4d/game/graphics/ui/box_glsl.hh'\
-  '/home/jack/chill/src/v4d/game/graphics/glsl/base.glsl'\
-  '/home/jack/chill/src/v4d/game/graphics/glsl/../cpp_glsl.hh'\
-  '/home/jack/chill/src/v4d/core/v4d.h'\
-  '/home/jack/chill/src/v4d/core/utilities/graphics/shaders/cpp_glsl_head.hh'
+  '/home/olivier/projects/chill/src/v4d/game/assets/shaders/ui/box.glsl'\
+  '/home/olivier/projects/chill/src/v4d/game/graphics/ui/box_glsl.hh'\
+  '/home/olivier/projects/chill/src/v4d/game/graphics/glsl/base.glsl'\
+  '/home/olivier/projects/chill/src/v4d/game/graphics/glsl/../cpp_glsl.hh'\
+  '/home/olivier/projects/chill/src/v4d/core/v4d.h'\
+  '/home/olivier/projects/chill/src/v4d/core/utilities/graphics/shaders/cpp_glsl_head.hh'
 
-if [[ -e '/home/jack/chill/build/debug/game/assets/shaders/ui/box.meta' ]] ; then
+if [[ -e '/home/olivier/projects/chill/build/debug/game/assets/shaders/ui/box.meta' ]] ; then
   clear
   echo "
 Compiling shader...
 
   "
-  ('/home/jack/chill/build/shadercompiler' '/home/jack/chill/src/v4d/game/assets/shaders/ui/box.glsl' '/home/jack/chill/build/debug/game/assets/shaders/ui/box.meta' '/home/jack/chill/src' '/home/jack/chill/src/v4d/core' '/home/jack/chill/src/v4d/core/utilities/graphics/shaders') && echo "[1;36m
+  ('/home/olivier/projects/chill/build/shadercompiler' '/home/olivier/projects/chill/src/v4d/game/assets/shaders/ui/box.glsl' '/home/olivier/projects/chill/build/debug/game/assets/shaders/ui/box.meta' '/home/olivier/projects/chill/src' '/home/olivier/projects/chill/src/v4d/core' '/home/olivier/projects/chill/src/v4d/core/utilities/graphics/shaders') && echo "[1;36m
 SUCCESS
 [0m" || echo "[1;31m
 FAILED
