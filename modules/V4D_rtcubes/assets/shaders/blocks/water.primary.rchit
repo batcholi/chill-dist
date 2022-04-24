@@ -359,6 +359,10 @@ vec3 VarianceClamp5(in vec3 color, in sampler2D tex, in vec2 uv) {
 			+ nearColor4*nearColor4
 	; m2 /= 5;
 	vec3 sigma = sqrt(m2 - m1*m1);
+	const float sigmaNoVarianceThreshold = 0.0001;
+	if (abs(sigma.r) < sigmaNoVarianceThreshold || abs(sigma.g) < sigmaNoVarianceThreshold || abs(sigma.b) < sigmaNoVarianceThreshold) {
+		return nearColor0;
+	}
 	vec3 boxMin = m1 - sigma;
 	vec3 boxMax = m1 + sigma;
 	return clamp(color, boxMin, boxMax);
@@ -395,6 +399,10 @@ vec3 VarianceClamp9(in vec3 color, in sampler2D tex, in vec2 uv) {
 			+ nearColor8*nearColor8
 	; m2 /= 9;
 	vec3 sigma = sqrt(m2 - m1*m1);
+	const float sigmaNoVarianceThreshold = 0.0001;
+	if (abs(sigma.r) < sigmaNoVarianceThreshold || abs(sigma.g) < sigmaNoVarianceThreshold || abs(sigma.b) < sigmaNoVarianceThreshold) {
+		return nearColor0;
+	}
 	vec3 boxMin = m1 - sigma;
 	vec3 boxMax = m1 + sigma;
 	return clamp(color, boxMin, boxMax);
@@ -1393,8 +1401,8 @@ float SimplexFractal(vec3 pos, int octaves) {
 float WaterWaves(vec3 pos) {
 	return 0
 		+ Simplex(vec3(pos.xz*0.1, float(renderer.timestamp - pos.z)*0.5))*3
-		+ Simplex(vec3(pos.xz, float(renderer.timestamp - pos.z)*0.5))*0.3
-		+ Simplex(vec3(pos.xz*vec2(4, 16), float(renderer.timestamp - pos.z)*0.5))*0.1
+		+ Simplex(vec3(pos.xz, float(renderer.timestamp - pos.z)*0.5))*0.5
+		+ Simplex(vec3(pos.xz*vec2(4, 16), float(renderer.timestamp - pos.z)*0.5))*0.2
 		+ Simplex(vec3(pos.xz*100, float(renderer.timestamp - pos.z)*0.5))*0.01
 	;
 }
@@ -1407,7 +1415,7 @@ void main() {
 		BlockData thisBlockData = ClientChunkData(VOXEL.extra).blocks[BlockIndex(thisBlockPos.x, thisBlockPos.y, thisBlockPos.z)];
 		uint waterDepth = GetTransparentBlockExtra(thisBlockData);
 		
-		ray.color = vec4(vec3(0.01,0.04,0.1) * renderer.skyLightColor, 0.2);
+		ray.color = vec4(vec3(0.01,0.08,0.1) * renderer.skyLightColor, 0.2);
 		ray.ior = 1.33;
 		
 		if (gl_HitKindEXT == BOX_INTERSECTION_KIND_INSIDE_FACE) {
