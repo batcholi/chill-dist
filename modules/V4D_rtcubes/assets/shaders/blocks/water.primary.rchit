@@ -233,7 +233,7 @@ struct CameraData {
 	aligned_uint32_t debug;
 	aligned_uint32_t debugViewMode;
 	aligned_uint64_t frameIndex;
-	aligned_uint64_t _unused;
+	aligned_float64_t deltaTime;
 	BUFFER_REFERENCE_ADDR(MVPBufferCurrent) mvpBuffer;
 	BUFFER_REFERENCE_ADDR(MVPBufferHistory) mvpBufferHistory;
 	BUFFER_REFERENCE_ADDR(RealtimeBufferCurrent) realtimeBuffer;
@@ -429,14 +429,14 @@ float Fresnel(const vec3 position, const vec3 normal, const float indexOfRefract
 vec3 ApplyToneMapping(in vec3 in_color) {
 	vec3 color = in_color;
 	
-	// // HDR ToneMapping (Reinhard)
-	// float exposure = camera.luminance.a / (camera.luminance.r + camera.luminance.g + camera.luminance.b);
-	// exposure *= 2; // Just a small tweak for better visuals... 
-	// color.rgb = vec3(1.0) - exp(-color.rgb * clamp(exposure, 0.0001, 10.0));
+	// HDR ToneMapping (Reinhard)
+	float lumRgbTotal = camera.luminance.r + camera.luminance.g + camera.luminance.b;
+	float exposure = lumRgbTotal > 0 ? camera.luminance.a / lumRgbTotal : 1;
+	color.rgb = vec3(1.0) - exp(-color.rgb * clamp(exposure, 0.0001, 10.0));
 	
 	// Contrast / Brightness
-	const float contrast = 1.02;
-	const float brightness = 1.8;
+	const float contrast = 1.01;
+	const float brightness = 1.0;
 	if (contrast != 1.0 || brightness != 1.0) {
 		color.rgb = mix(vec3(0.5), color.rgb, contrast) * brightness;
 	}
@@ -445,7 +445,7 @@ vec3 ApplyToneMapping(in vec3 in_color) {
 	float gammaCorrection = 2.0;
 	color.rgb = pow(color.rgb, vec3(1.0 / gammaCorrection));
 	
-	return color;
+	return clamp(color, vec3(0), vec3(1));
 }
 
 vec3 Heatmap(float t) {
@@ -765,8 +765,8 @@ struct RayPayload {
 	#define BOX_INTERSECTION_KIND_INSIDE_FACE 1
 #endif
 
-#define WORLD2VIEWNORMAL mat3(transpose(inverse(camera.viewMatrix)))
-#define VIEW2WORLDNORMAL mat3(transpose(camera.viewMatrix))
+#define WORLD2VIEWNORMAL transpose(inverse(mat3(camera.viewMatrix)))
+#define VIEW2WORLDNORMAL transpose(mat3(camera.viewMatrix))
 
 #if defined(SHADER_RINT) || defined(SHADER_RCHIT)
 	// Intersects ray with a BOX, generating T1 and T2 values
@@ -1378,16 +1378,17 @@ float SimplexFractal(vec3 pos, int octaves) {
 	return f;
 }
 
-#define NormalFromBumpNoise(_noiseFunc, _position, _normal, _waveHeight) \
-	vec3 _tangentX = normalize(cross(normalize(vec3(0.356,1.2145,0.24537))/* fixed arbitrary vector in object space */, _normal.xyz));\
-	vec3 _tangentY = normalize(cross(_normal.xyz, _tangentX));\
-	mat3 _TBN = mat3(_tangentX, _tangentY, _normal.xyz);\
-	float _altitudeTop = _noiseFunc(_position.xyz + _tangentY*_waveHeight);\
-	float _altitudeBottom = _noiseFunc(_position.xyz - _tangentY*_waveHeight);\
-	float _altitudeRight = _noiseFunc(_position.xyz + _tangentX*_waveHeight);\
-	float _altitudeLeft = _noiseFunc(_position.xyz - _tangentX*_waveHeight);\
+#define APPLY_NORMAL_BUMP_NOISE(_noiseFunc, _position, _normal, _waveHeight) {\
+	vec3 _tangentX = normalize(cross(normalize(vec3(0.356,1.2145,0.24537))/* fixed arbitrary vector in object space */, _normal));\
+	vec3 _tangentY = normalize(cross(_normal, _tangentX));\
+	mat3 _TBN = mat3(_tangentX, _tangentY, _normal);\
+	float _altitudeTop = _noiseFunc(_position + _tangentY*_waveHeight);\
+	float _altitudeBottom = _noiseFunc(_position - _tangentY*_waveHeight);\
+	float _altitudeRight = _noiseFunc(_position + _tangentX*_waveHeight);\
+	float _altitudeLeft = _noiseFunc(_position - _tangentX*_waveHeight);\
 	vec3 _bump = normalize(vec3((_altitudeRight-_altitudeLeft), (_altitudeBottom-_altitudeTop), 2));\
-	vec3 normal = normalize(_TBN * _bump)
+	_normal = normalize(_TBN * _bump);\
+}
 float WaterWaves(vec3 pos) {
 	return 
 		+ Simplex(vec3(pos.xz*0.2, float(renderer.timestamp - pos.z)*0.5))*2
@@ -1398,31 +1399,33 @@ void main() {
 	CLOSEST_HIT_BEGIN
 		CLOSEST_HIT_BOX_INTERSECTION_COMPUTE_NORMAL
 		
-		ray.color = vec4(vec3(0,0.01,0.02) * renderer.skyLightColor, 0.5);
-		ray.ior = 1.3;
+		ivec3 thisBlockPos = AABB_CENTER_INT;
+		BlockData thisBlockData = ClientChunkData(VOXEL.extra).blocks[BlockIndex(thisBlockPos.x, thisBlockPos.y, thisBlockPos.z)];
+		uint waterDepth = GetTransparentBlockExtra(thisBlockData);
 		
-		NormalFromBumpNoise(WaterWaves, ray.worldPosition, ray.normal, 0.01);
-		ray.normal = normal;
+		ray.color = vec4(vec3(0.01,0.04,0.1) * renderer.skyLightColor, 0.2);
+		ray.ior = 1.33;
+		ray.normal = vec3(0,1,0);
+		
+		APPLY_NORMAL_BUMP_NOISE(WaterWaves, ray.worldPosition, ray.normal, 0.01)
+		
+		if (gl_HitKindEXT == BOX_INTERSECTION_KIND_INSIDE_FACE) {
+			ray.hitDistance = max(camera.zNear, ray.hitDistance - camera.zNear - EPSILON*20);
+		}
+		if (BOX_FACE == 4 && gl_HitKindEXT == BOX_INTERSECTION_KIND_OUTSIDE_FACE && waterDepth == 0) {
+			// Top face of depth 0
+			APPLY_FRESNEL_REFLECTION
+			ray.color.a = mix(ray.color.a, 1.0, clamp(pow(ray.reflection, 0.5), 0, 1));
+		} else {
+			float hitBlockUnderwaterDepth = ray.localPosition.y - AABB_MAX.y - float(waterDepth);
+			float distanceToSurface = clamp(gl_HitTEXT + min(-hitBlockUnderwaterDepth/max(0.01, dot(gl_WorldRayDirectionEXT, vec3(0,1,0))), camera.zFar), 0, MAX_WEATER_DEPTH);
+			ray.ior = -distanceToSurface; // used as the underwater distance to surface when negative
+			if (distanceToSurface > 0) {
+				vec3 wavePosition = (gl_WorldRayOriginEXT + gl_WorldRayDirectionEXT * distanceToSurface)*6;
+				APPLY_NORMAL_BUMP_NOISE(WaterWaves, wavePosition*6.0, ray.normal, 0.1)
+				APPLY_NORMAL_BUMP_NOISE(WaterWaves, wavePosition, ray.normal, 0.1)
+			}
+		}
 		
 	CLOSEST_HIT_END
-	CLOSEST_HIT_BOX_AIM_WIREFRAME
-	
-	if (gl_HitKindEXT == BOX_INTERSECTION_KIND_INSIDE_FACE) {
-		ray.hitDistance = max(camera.zNear, ray.hitDistance - camera.zNear - EPSILON*20);
-	}
-	ClientChunkData chunk = ClientChunkData(VOXEL.extra);
-	ivec3 thisBlockPos = AABB_CENTER_INT;
-	BlockData thisBlockData = chunk.blocks[BlockIndex(thisBlockPos.x, thisBlockPos.y, thisBlockPos.z)];
-	if (BOX_FACE == 4 && gl_HitKindEXT == BOX_INTERSECTION_KIND_OUTSIDE_FACE && GetTransparentBlockExtra(thisBlockData) == 0) {
-		// Top face of depth 0
-		APPLY_FRESNEL_REFLECTION
-		ray.color.a = mix(ray.color.a, 1.0, pow(ray.reflection, 0.5));
-	} else {
-		float hitBlockUnderwaterDepth = ray.localPosition.y - AABB_MAX.y - float(GetTransparentBlockExtra(thisBlockData));
-		float distanceToSurface = gl_HitTEXT + min(-hitBlockUnderwaterDepth/max(0, dot(gl_WorldRayDirectionEXT, vec3(0,1,0))), camera.zFar);
-		ray.ior = -distanceToSurface; // used as the underwater distance to surface when negative
-		vec3 wavePosition = (gl_WorldRayOriginEXT + gl_WorldRayDirectionEXT * distanceToSurface)*5;
-		NormalFromBumpNoise(WaterWaves, wavePosition, vec3(0,1,0), 0.2);
-		ray.normal = normal;
-	}
 }

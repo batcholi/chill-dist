@@ -228,7 +228,7 @@ struct CameraData {
 	aligned_uint32_t debug;
 	aligned_uint32_t debugViewMode;
 	aligned_uint64_t frameIndex;
-	aligned_uint64_t _unused;
+	aligned_float64_t deltaTime;
 	BUFFER_REFERENCE_ADDR(MVPBufferCurrent) mvpBuffer;
 	BUFFER_REFERENCE_ADDR(MVPBufferHistory) mvpBufferHistory;
 	BUFFER_REFERENCE_ADDR(RealtimeBufferCurrent) realtimeBuffer;
@@ -424,14 +424,14 @@ float Fresnel(const vec3 position, const vec3 normal, const float indexOfRefract
 vec3 ApplyToneMapping(in vec3 in_color) {
 	vec3 color = in_color;
 	
-	// // HDR ToneMapping (Reinhard)
-	// float exposure = camera.luminance.a / (camera.luminance.r + camera.luminance.g + camera.luminance.b);
-	// exposure *= 2; // Just a small tweak for better visuals... 
-	// color.rgb = vec3(1.0) - exp(-color.rgb * clamp(exposure, 0.0001, 10.0));
+	// HDR ToneMapping (Reinhard)
+	float lumRgbTotal = camera.luminance.r + camera.luminance.g + camera.luminance.b;
+	float exposure = lumRgbTotal > 0 ? camera.luminance.a / lumRgbTotal : 1;
+	color.rgb = vec3(1.0) - exp(-color.rgb * clamp(exposure, 0.0001, 10.0));
 	
 	// Contrast / Brightness
-	const float contrast = 1.02;
-	const float brightness = 1.8;
+	const float contrast = 1.03;
+	const float brightness = 1.1;
 	if (contrast != 1.0 || brightness != 1.0) {
 		color.rgb = mix(vec3(0.5), color.rgb, contrast) * brightness;
 	}
@@ -440,7 +440,7 @@ vec3 ApplyToneMapping(in vec3 in_color) {
 	float gammaCorrection = 2.0;
 	color.rgb = pow(color.rgb, vec3(1.0 / gammaCorrection));
 	
-	return color;
+	return clamp(color, vec3(0), vec3(1));
 }
 
 vec3 Heatmap(float t) {
@@ -692,8 +692,8 @@ layout(location = 0) out flat uint out_char;
 void main() {
 	float screenRatio = float(camera.width) / float(camera.height);
 	float offset = (size * gl_InstanceIndex) - ((length-1) * size * 0.5);
-	gl_Position = vec4((x + offset*0.3333)/screenRatio, y, 0, 1);
-	gl_PointSize = size * camera.height;
+	gl_Position = vec4((x + offset*0.6)/screenRatio, y, 0, 1);
+	gl_PointSize = size * camera.height / camera.renderScale;
 	out_char = (text[gl_InstanceIndex / 4] >> ((gl_InstanceIndex % 4) * 8)) & 0xff;
 }
 

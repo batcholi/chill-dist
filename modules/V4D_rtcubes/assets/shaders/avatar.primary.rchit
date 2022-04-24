@@ -233,7 +233,7 @@ struct CameraData {
 	aligned_uint32_t debug;
 	aligned_uint32_t debugViewMode;
 	aligned_uint64_t frameIndex;
-	aligned_uint64_t _unused;
+	aligned_float64_t deltaTime;
 	BUFFER_REFERENCE_ADDR(MVPBufferCurrent) mvpBuffer;
 	BUFFER_REFERENCE_ADDR(MVPBufferHistory) mvpBufferHistory;
 	BUFFER_REFERENCE_ADDR(RealtimeBufferCurrent) realtimeBuffer;
@@ -429,14 +429,14 @@ float Fresnel(const vec3 position, const vec3 normal, const float indexOfRefract
 vec3 ApplyToneMapping(in vec3 in_color) {
 	vec3 color = in_color;
 	
-	// // HDR ToneMapping (Reinhard)
-	// float exposure = camera.luminance.a / (camera.luminance.r + camera.luminance.g + camera.luminance.b);
-	// exposure *= 2; // Just a small tweak for better visuals... 
-	// color.rgb = vec3(1.0) - exp(-color.rgb * clamp(exposure, 0.0001, 10.0));
+	// HDR ToneMapping (Reinhard)
+	float lumRgbTotal = camera.luminance.r + camera.luminance.g + camera.luminance.b;
+	float exposure = lumRgbTotal > 0 ? camera.luminance.a / lumRgbTotal : 1;
+	color.rgb = vec3(1.0) - exp(-color.rgb * clamp(exposure, 0.0001, 10.0));
 	
 	// Contrast / Brightness
-	const float contrast = 1.02;
-	const float brightness = 1.8;
+	const float contrast = 1.01;
+	const float brightness = 1.0;
 	if (contrast != 1.0 || brightness != 1.0) {
 		color.rgb = mix(vec3(0.5), color.rgb, contrast) * brightness;
 	}
@@ -445,7 +445,7 @@ vec3 ApplyToneMapping(in vec3 in_color) {
 	float gammaCorrection = 2.0;
 	color.rgb = pow(color.rgb, vec3(1.0 / gammaCorrection));
 	
-	return color;
+	return clamp(color, vec3(0), vec3(1));
 }
 
 vec3 Heatmap(float t) {
@@ -765,8 +765,8 @@ struct RayPayload {
 	#define BOX_INTERSECTION_KIND_INSIDE_FACE 1
 #endif
 
-#define WORLD2VIEWNORMAL mat3(transpose(inverse(camera.viewMatrix)))
-#define VIEW2WORLDNORMAL mat3(transpose(camera.viewMatrix))
+#define WORLD2VIEWNORMAL transpose(inverse(mat3(camera.viewMatrix)))
+#define VIEW2WORLDNORMAL transpose(mat3(camera.viewMatrix))
 
 #if defined(SHADER_RINT) || defined(SHADER_RCHIT)
 	// Intersects ray with a BOX, generating T1 and T2 values
