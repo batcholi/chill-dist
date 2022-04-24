@@ -435,8 +435,8 @@ vec3 ApplyToneMapping(in vec3 in_color) {
 	color.rgb = vec3(1.0) - exp(-color.rgb * clamp(exposure, 0.0001, 10.0));
 	
 	// Contrast / Brightness
-	const float contrast = 1.01;
-	const float brightness = 1.0;
+	const float contrast = 1.05;
+	const float brightness = 1.2;
 	if (contrast != 1.0 || brightness != 1.0) {
 		color.rgb = mix(vec3(0.5), color.rgb, contrast) * brightness;
 	}
@@ -822,10 +822,11 @@ struct RayPayload {
 }
 #define CLOSEST_HIT_BEGIN CLOSEST_HIT_BEGIN_T(gl_HitTEXT)
 #define CLOSEST_HIT_END {\
+	const float bias = 0.01;\
 	float rDotN = dot(gl_WorldRayDirectionEXT, ray.normal);\
-	if (rDotN < 0.5 && rDotN > -0.05) {\
+	if (rDotN < 0.5 && rDotN > -bias) {\
 		vec3 tmp = normalize(cross(gl_WorldRayDirectionEXT, ray.normal));\
-		ray.normal = normalize(mix(-gl_WorldRayDirectionEXT, normalize(cross(-gl_WorldRayDirectionEXT, tmp)), 0.95));\
+		ray.normal = normalize(mix(-gl_WorldRayDirectionEXT, normalize(cross(-gl_WorldRayDirectionEXT, tmp)), 1.0-bias));\
 	}\
 	ray.normal = DoubleSidedNormals(ray.normal);\
 }
@@ -1100,7 +1101,7 @@ float sdfSphere(vec3 p, float r) {
 
 #define MAX_SKY_LIGHT_LEVEL 15
 #define MAX_TORCH_LIGHT_LEVEL 15
-#define MAX_WEATER_DEPTH 63
+#define MAX_WATER_DEPTH 63
 
 // #define FACE_PLUS_X 0x01
 // #define FACE_MINUS_X 0x02

@@ -435,8 +435,8 @@ vec3 ApplyToneMapping(in vec3 in_color) {
 	color.rgb = vec3(1.0) - exp(-color.rgb * clamp(exposure, 0.0001, 10.0));
 	
 	// Contrast / Brightness
-	const float contrast = 1.01;
-	const float brightness = 1.0;
+	const float contrast = 1.05;
+	const float brightness = 1.2;
 	if (contrast != 1.0 || brightness != 1.0) {
 		color.rgb = mix(vec3(0.5), color.rgb, contrast) * brightness;
 	}
@@ -822,10 +822,11 @@ struct RayPayload {
 }
 #define CLOSEST_HIT_BEGIN CLOSEST_HIT_BEGIN_T(gl_HitTEXT)
 #define CLOSEST_HIT_END {\
+	const float bias = 0.01;\
 	float rDotN = dot(gl_WorldRayDirectionEXT, ray.normal);\
-	if (rDotN < 0.5 && rDotN > -0.05) {\
+	if (rDotN < 0.5 && rDotN > -bias) {\
 		vec3 tmp = normalize(cross(gl_WorldRayDirectionEXT, ray.normal));\
-		ray.normal = normalize(mix(-gl_WorldRayDirectionEXT, normalize(cross(-gl_WorldRayDirectionEXT, tmp)), 0.95));\
+		ray.normal = normalize(mix(-gl_WorldRayDirectionEXT, normalize(cross(-gl_WorldRayDirectionEXT, tmp)), 1.0-bias));\
 	}\
 	ray.normal = DoubleSidedNormals(ray.normal);\
 }
@@ -1100,7 +1101,7 @@ float sdfSphere(vec3 p, float r) {
 
 #define MAX_SKY_LIGHT_LEVEL 15
 #define MAX_TORCH_LIGHT_LEVEL 15
-#define MAX_WEATER_DEPTH 63
+#define MAX_WATER_DEPTH 63
 
 // #define FACE_PLUS_X 0x01
 // #define FACE_MINUS_X 0x02
@@ -1390,13 +1391,16 @@ float SimplexFractal(vec3 pos, int octaves) {
 	_normal = normalize(_TBN * _bump);\
 }
 float WaterWaves(vec3 pos) {
-	return 
-		+ Simplex(vec3(pos.xz*0.2, float(renderer.timestamp - pos.z)*0.5))*2
-		+ Simplex(vec3(pos.xz*vec2(4,20), float(renderer.timestamp - pos.z)*0.5))*0.02
+	return 0
+		+ Simplex(vec3(pos.xz*0.1, float(renderer.timestamp - pos.z)*0.5))*3
+		+ Simplex(vec3(pos.xz, float(renderer.timestamp - pos.z)*0.5))*0.3
+		+ Simplex(vec3(pos.xz*vec2(4, 16), float(renderer.timestamp - pos.z)*0.5))*0.1
+		+ Simplex(vec3(pos.xz*100, float(renderer.timestamp - pos.z)*0.5))*0.01
 	;
 }
 void main() {
 	CLOSEST_HIT_BEGIN
+		
 		CLOSEST_HIT_BOX_INTERSECTION_COMPUTE_NORMAL
 		
 		ivec3 thisBlockPos = AABB_CENTER_INT;
@@ -1405,27 +1409,26 @@ void main() {
 		
 		ray.color = vec4(vec3(0.01,0.04,0.1) * renderer.skyLightColor, 0.2);
 		ray.ior = 1.33;
-		ray.normal = vec3(0,1,0);
-		
-		APPLY_NORMAL_BUMP_NOISE(WaterWaves, ray.worldPosition, ray.normal, 0.01)
 		
 		if (gl_HitKindEXT == BOX_INTERSECTION_KIND_INSIDE_FACE) {
 			ray.hitDistance = max(camera.zNear, ray.hitDistance - camera.zNear - EPSILON*20);
 		}
-		if (BOX_FACE == 4 && gl_HitKindEXT == BOX_INTERSECTION_KIND_OUTSIDE_FACE && waterDepth == 0) {
+		if (BOX_FACE != 1 && gl_HitKindEXT == BOX_INTERSECTION_KIND_OUTSIDE_FACE && waterDepth == 0) {
 			// Top face of depth 0
+			ray.normal = vec3(0,1,0);
+			APPLY_NORMAL_BUMP_NOISE(WaterWaves, ray.worldPosition, ray.normal, 0.005)
 			APPLY_FRESNEL_REFLECTION
 			ray.color.a = mix(ray.color.a, 1.0, clamp(pow(ray.reflection, 0.5), 0, 1));
 		} else {
 			float hitBlockUnderwaterDepth = ray.localPosition.y - AABB_MAX.y - float(waterDepth);
-			float distanceToSurface = clamp(gl_HitTEXT + min(-hitBlockUnderwaterDepth/max(0.01, dot(gl_WorldRayDirectionEXT, vec3(0,1,0))), camera.zFar), 0, MAX_WEATER_DEPTH);
+			float distanceToSurface = clamp(gl_HitTEXT + min(-hitBlockUnderwaterDepth/max(0.01, dot(gl_WorldRayDirectionEXT, vec3(0,1,0))), camera.zFar), 0, MAX_WATER_DEPTH);
 			ray.ior = -distanceToSurface; // used as the underwater distance to surface when negative
 			if (distanceToSurface > 0) {
-				vec3 wavePosition = (gl_WorldRayOriginEXT + gl_WorldRayDirectionEXT * distanceToSurface)*6;
-				APPLY_NORMAL_BUMP_NOISE(WaterWaves, wavePosition*6.0, ray.normal, 0.1)
-				APPLY_NORMAL_BUMP_NOISE(WaterWaves, wavePosition, ray.normal, 0.1)
+				ray.normal = vec3(0,-1,0);
+				vec3 wavePosition = gl_WorldRayOriginEXT + gl_WorldRayDirectionEXT * distanceToSurface;
+				APPLY_NORMAL_BUMP_NOISE(WaterWaves, wavePosition, ray.normal, 0.02)
 			}
 		}
-		
+
 	CLOSEST_HIT_END
 }
