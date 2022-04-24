@@ -335,8 +335,8 @@ bool ReprojectHistoryUV(inout vec2 uv) {
 	return uv.x > 0 && uv.x < 1 && uv.y > 0 && uv.y < 1;
 }
 
-float GetFragDepthFromViewSpacePosition(vec3 viewSpacePos) {
-	vec4 clipSpace = mat4(camera.projectionMatrixWithTXAA) * mat4(camera.viewMatrix) * vec4(viewSpacePos, 1);
+float GetFragDepthFromWorldSpacePosition(vec3 worldSpacePos) {
+	vec4 clipSpace = mat4(camera.projectionMatrixWithTXAA) * mat4(camera.viewMatrix) * vec4(worldSpacePos, 1);
 	return clipSpace.z / clipSpace.w;
 }
 
@@ -1326,7 +1326,7 @@ void main() {
 			}
 		}
 		
-		APPLY_FRESNEL_REFLECTION
+		// APPLY_FRESNEL_REFLECTION
 		
 		APPLY_STANDARD_BLOCK_LIGHTING
 		
