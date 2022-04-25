@@ -746,7 +746,11 @@ struct RayPayload {
 	float totalDistanceFromEye;
 	uvec2 index;
 	int tlasInstanceIndex;
-	float ior; // Index Of Refraction when positive, distance to surface when negative (underwater). Also used as indication of second ray when in rahit for water (will be -1).
+	float ior; // Index Of Refraction
+	// For water
+	float distanceToSurface; // distance to surface when underwater. Also used as indication of second ray when in rahit for water (!= 0)
+	float falloffDistance;
+	float falloffPow;
 };
 #ifdef SHADER_RGEN
 	layout(location = RAY_PAYLOAD_PRIMARY) rayPayloadEXT RayPayload ray;
@@ -824,9 +828,12 @@ struct RayPayload {
 	ray.worldPosition = gl_WorldRayOriginEXT + gl_WorldRayDirectionEXT * ray.hitDistance;\
 	ray.index = uvec2(AIM_GEOMETRY_ID, gl_PrimitiveID);\
 	ray.tlasInstanceIndex = gl_InstanceID;\
-	ray.ior = 1.45;\
 	ray.color = vec4(vec3(0.5), 1.0);\
 	ray.reflection = 0;\
+	ray.ior = 1.45;\
+	ray.distanceToSurface = 0;\
+	ray.falloffDistance = 0;\
+	ray.falloffPow = 0;\
 }
 #define CLOSEST_HIT_BEGIN CLOSEST_HIT_BEGIN_T(gl_HitTEXT)
 #define CLOSEST_HIT_END {\
@@ -1401,9 +1408,9 @@ float SimplexFractal(vec3 pos, int octaves) {
 float WaterWaves(vec3 pos) {
 	return 0
 		+ Simplex(vec3(pos.xz*0.1, float(renderer.timestamp - pos.z)*0.5))*3
-		+ Simplex(vec3(pos.xz, float(renderer.timestamp - pos.z)*0.5))*0.5
-		+ Simplex(vec3(pos.xz*vec2(4, 16), float(renderer.timestamp - pos.z)*0.5))*0.2
-		+ Simplex(vec3(pos.xz*100, float(renderer.timestamp - pos.z)*0.5))*0.01
+		+ Simplex(vec3(pos.xz, float(renderer.timestamp - pos.z)))*0.5
+		+ Simplex(vec3(pos.xz*vec2(4, 16), float(renderer.timestamp - pos.z*2)))*0.2
+		+ Simplex(vec3(pos.xz*100, float(renderer.timestamp)))*0.01
 	;
 }
 void main() {
@@ -1415,28 +1422,35 @@ void main() {
 		BlockData thisBlockData = ClientChunkData(VOXEL.extra).blocks[BlockIndex(thisBlockPos.x, thisBlockPos.y, thisBlockPos.z)];
 		uint waterDepth = GetTransparentBlockExtra(thisBlockData);
 		
-		ray.color = vec4(vec3(0.01,0.08,0.1) * renderer.skyLightColor, 0.2);
+		ray.color = vec4(vec3(0.01,0.05,0.07) * renderer.skyLightColor, 0.3);
 		ray.ior = 1.33;
 		
 		if (gl_HitKindEXT == BOX_INTERSECTION_KIND_INSIDE_FACE) {
 			ray.hitDistance = max(camera.zNear, ray.hitDistance - camera.zNear - EPSILON*20);
 		}
 		if (BOX_FACE != 1 && gl_HitKindEXT == BOX_INTERSECTION_KIND_OUTSIDE_FACE && waterDepth == 0) {
-			// Top face of depth 0
+			// Above water
 			ray.normal = vec3(0,1,0);
 			APPLY_NORMAL_BUMP_NOISE(WaterWaves, ray.worldPosition, ray.normal, 0.005)
 			APPLY_FRESNEL_REFLECTION
 			ray.color.a = mix(ray.color.a, 1.0, clamp(pow(ray.reflection, 0.5), 0, 1));
 		} else {
-			float hitBlockUnderwaterDepth = ray.localPosition.y - AABB_MAX.y - float(waterDepth);
-			float distanceToSurface = clamp(gl_HitTEXT + min(-hitBlockUnderwaterDepth/max(0.01, dot(gl_WorldRayDirectionEXT, vec3(0,1,0))), camera.zFar), 0, MAX_WATER_DEPTH);
-			ray.ior = -distanceToSurface; // used as the underwater distance to surface when negative
-			if (distanceToSurface > 0) {
+			// Underwater
+			if (dot(gl_WorldRayDirectionEXT, vec3(0,1,0)) > 0) {
+				// Looking at surface
+				float hitBlockUnderwaterDepth = ray.localPosition.y - AABB_MAX.y - float(waterDepth);
+				ray.distanceToSurface = clamp(gl_HitTEXT + min(-hitBlockUnderwaterDepth/max(0.001, dot(gl_WorldRayDirectionEXT, vec3(0,1,0))), camera.zFar), camera.zNear, MAX_WATER_DEPTH);
 				ray.normal = vec3(0,-1,0);
-				vec3 wavePosition = gl_WorldRayOriginEXT + gl_WorldRayDirectionEXT * distanceToSurface;
+				vec3 wavePosition = gl_WorldRayOriginEXT + gl_WorldRayDirectionEXT * ray.distanceToSurface;
 				APPLY_NORMAL_BUMP_NOISE(WaterWaves, wavePosition, ray.normal, 0.02)
+			} else {
+				// Looking down
+				ray.distanceToSurface = -1;
+				ray.ior = 1;
 			}
 		}
+		ray.falloffDistance = MAX_WATER_DEPTH;
+		ray.falloffPow = 4;
 
 	CLOSEST_HIT_END
 }

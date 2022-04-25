@@ -746,7 +746,11 @@ struct RayPayload {
 	float totalDistanceFromEye;
 	uvec2 index;
 	int tlasInstanceIndex;
-	float ior; // Index Of Refraction when positive, distance to surface when negative (underwater). Also used as indication of second ray when in rahit for water (will be -1).
+	float ior; // Index Of Refraction
+	// For water
+	float distanceToSurface; // distance to surface when underwater. Also used as indication of second ray when in rahit for water (!= 0)
+	float falloffDistance;
+	float falloffPow;
 };
 #ifdef SHADER_RGEN
 	layout(location = RAY_PAYLOAD_PRIMARY) rayPayloadEXT RayPayload ray;
@@ -824,9 +828,12 @@ struct RayPayload {
 	ray.worldPosition = gl_WorldRayOriginEXT + gl_WorldRayDirectionEXT * ray.hitDistance;\
 	ray.index = uvec2(AIM_GEOMETRY_ID, gl_PrimitiveID);\
 	ray.tlasInstanceIndex = gl_InstanceID;\
-	ray.ior = 1.45;\
 	ray.color = vec4(vec3(0.5), 1.0);\
 	ray.reflection = 0;\
+	ray.ior = 1.45;\
+	ray.distanceToSurface = 0;\
+	ray.falloffDistance = 0;\
+	ray.falloffPow = 0;\
 }
 #define CLOSEST_HIT_BEGIN CLOSEST_HIT_BEGIN_T(gl_HitTEXT)
 #define CLOSEST_HIT_END {\
@@ -1315,7 +1322,7 @@ STATIC_ASSERT_ALIGNED16_SIZE(ClientChunkData, 32 + 2*MAX_BLOCKS_PER_CHUNK);
 
 
 void main() {
-	if (ray.ior == -1) {
+	if (ray.distanceToSurface != 0) {
 		ignoreIntersectionEXT;
 	}
 }

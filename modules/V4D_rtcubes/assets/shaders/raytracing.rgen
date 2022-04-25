@@ -746,7 +746,11 @@ struct RayPayload {
 	float totalDistanceFromEye;
 	uvec2 index;
 	int tlasInstanceIndex;
-	float ior; // Index Of Refraction when positive, distance to surface when negative (underwater). Also used as indication of second ray when in rahit for water (will be -1).
+	float ior; // Index Of Refraction
+	// For water
+	float distanceToSurface; // distance to surface when underwater. Also used as indication of second ray when in rahit for water (!= 0)
+	float falloffDistance;
+	float falloffPow;
 };
 #ifdef SHADER_RGEN
 	layout(location = RAY_PAYLOAD_PRIMARY) rayPayloadEXT RayPayload ray;
@@ -824,9 +828,12 @@ struct RayPayload {
 	ray.worldPosition = gl_WorldRayOriginEXT + gl_WorldRayDirectionEXT * ray.hitDistance;\
 	ray.index = uvec2(AIM_GEOMETRY_ID, gl_PrimitiveID);\
 	ray.tlasInstanceIndex = gl_InstanceID;\
-	ray.ior = 1.45;\
 	ray.color = vec4(vec3(0.5), 1.0);\
 	ray.reflection = 0;\
+	ray.ior = 1.45;\
+	ray.distanceToSurface = 0;\
+	ray.falloffDistance = 0;\
+	ray.falloffPow = 0;\
 }
 #define CLOSEST_HIT_BEGIN CLOSEST_HIT_BEGIN_T(gl_HitTEXT)
 #define CLOSEST_HIT_END {\
@@ -1353,6 +1360,7 @@ void main() {
 	
 	// Initialize ray payload
 	ray.totalDistanceFromEye = 0;
+	ray.distanceToSurface = 0;
 	ray.ior = 1;
 	// Launch Primary Ray
 	traceRayEXT(tlas, 0, RENDERABLE_TYPE_ALL, 0/*rayType*/, SBT_HITGROUPS_PER_GEOMETRY/*nbRayTypes*/, 0/*missIndex*/, rayPosition, cam.zNear, rayDirection, cam.zFar, RAY_PAYLOAD_PRIMARY);
@@ -1368,42 +1376,45 @@ void main() {
 	if (ray.hitDistance > 0 && ray.color.a < 1) {
 		float rayIor = ray.ior;
 		vec3 rayNormal = normalize(ray.normal);
-		if (rayIor > 0) {
-			Refract(rayDirection, -rayNormal, 1.0 / rayIor);
-		}
-		if (dot(rayDirection,rayDirection) > 0) {
-			ray.ior = -1;
-			float maxRayDistance = rayIor < 0 ? -rayIor : cam.zFar;
-			if (rayIor < 0) {
-				rayPosition = inverse(cam.viewMatrix)[3].xyz;
+		float falloffDistance = ray.falloffDistance;
+		float falloffPow = ray.falloffPow;
+		if (Refract(rayDirection, rayNormal, ray.distanceToSurface > 0 ? 1 : rayIor)) {
+			float maxRayDistance = cam.zFar;
+			if (ray.distanceToSurface > 0) {
+				// Underwater, From camera to surface
+				rayPosition = initialRayPosition;
+				maxRayDistance = ray.distanceToSurface;
+			} else if (falloffDistance > 0) {
+				maxRayDistance = falloffDistance;
 			}
+			// Launch ray to surface or to underwater objects (should exclude water blocks)
+			ray.distanceToSurface = -1;
 			traceRayEXT(tlas, 0, RENDERABLE_TYPE_ALL, 0/*rayType*/, SBT_HITGROUPS_PER_GEOMETRY/*nbRayTypes*/, 0/*missIndex*/, rayPosition, cam.zNear, rayDirection, maxRayDistance, RAY_PAYLOAD_PRIMARY);
 			depthRay = ray;
-			float underwaterVisibility = rayIor < 0? pow(smoothstep(MAX_WATER_DEPTH, 1, (ray.hitDistance>0? ray.hitDistance : maxRayDistance)), 4) : 1;
+			float falloff = falloffDistance > 0 ? pow(smoothstep(falloffDistance, 0, (ray.hitDistance>0? distance(ray.worldPosition, initialRayPosition) : maxRayDistance)), falloffPow) : 1;
 			// Surface refraction
-			if (rayIor < 0 && ray.hitDistance == 0) {
-				ray.ior = -1;
+			if (ray.hitDistance == 0) {
+				ray.distanceToSurface = -1;
 				rayPosition += rayDirection * maxRayDistance;
-				if (Refract(rayDirection, -rayNormal, 1.33)) {
-					traceRayEXT(tlas, 0, RENDERABLE_TYPE_ALL, 0/*rayType*/, SBT_HITGROUPS_PER_GEOMETRY/*nbRayTypes*/, 0/*missIndex*/, rayPosition, cam.zNear, rayDirection, cam.zFar, RAY_PAYLOAD_PRIMARY);
-				} else {
-					traceRayEXT(tlas, 0, RENDERABLE_TYPE_ALL, 0/*rayType*/, SBT_HITGROUPS_PER_GEOMETRY/*nbRayTypes*/, 0/*missIndex*/, rayPosition, cam.zNear, rayDirection, cam.zFar, RAY_PAYLOAD_PRIMARY);
-					ray.color.rgb = mix(firstRay.color.rgb, ray.color.rgb, pow(max(0, dot(vec3(0,1,0), initialRayDirection)), 0.5));
-				}
+				Refract(rayDirection, rayNormal, 1.0 / rayIor);
+				// Launch ray from surface to other objects (should exclude water blocks)
+				traceRayEXT(tlas, 0, RENDERABLE_TYPE_ALL, 0/*rayType*/, SBT_HITGROUPS_PER_GEOMETRY/*nbRayTypes*/, 0/*missIndex*/, rayPosition, cam.zNear, rayDirection, cam.zFar, RAY_PAYLOAD_PRIMARY);
+				ray.color.rgb = mix(ray.color.rgb, firstRay.color.rgb, firstRay.color.a);
 				reflection = 0;
 			}
 			color = mix(ray.color.rgb, color, clamp(firstRay.color.a, 0, 1));
-			color = mix(firstRay.color.rgb*0.5, color, clamp(underwaterVisibility*underwaterVisibility, 0, 1));
+			color = mix(firstRay.color.rgb*firstRay.color.a, color, falloff);
 		}
 	}
 	
 	// Reflection
 	while (reflection > 0.01) {
-		// ray.ior = 1;
+		ray.distanceToSurface = 0;
 		if (dot(reflectDirection, reflectDirection) == 0) break;
 		traceRayEXT(tlas, 0, RENDERABLE_TYPE_ALL, 0/*rayType*/, SBT_HITGROUPS_PER_GEOMETRY/*nbRayTypes*/, 0/*missIndex*/, rayPosition, cam.zNear, reflectDirection, cam.zFar, RAY_PAYLOAD_PRIMARY);
 		color = mix(color, ray.color.rgb, clamp(reflection, 0, 1));
 		reflection *= clamp(ray.reflection, 0, 0.5);
+		rayPosition += reflectDirection * ray.hitDistance;
 		reflectDirection = normalize(reflect(reflectDirection, ray.normal));
 	}
 	

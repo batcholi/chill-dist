@@ -354,6 +354,10 @@ vec3 VarianceClamp5(in vec3 color, in sampler2D tex, in vec2 uv) {
 			+ nearColor4*nearColor4
 	; m2 /= 5;
 	vec3 sigma = sqrt(m2 - m1*m1);
+	const float sigmaNoVarianceThreshold = 0.0001;
+	if (abs(sigma.r) < sigmaNoVarianceThreshold || abs(sigma.g) < sigmaNoVarianceThreshold || abs(sigma.b) < sigmaNoVarianceThreshold) {
+		return nearColor0;
+	}
 	vec3 boxMin = m1 - sigma;
 	vec3 boxMax = m1 + sigma;
 	return clamp(color, boxMin, boxMax);
@@ -390,6 +394,10 @@ vec3 VarianceClamp9(in vec3 color, in sampler2D tex, in vec2 uv) {
 			+ nearColor8*nearColor8
 	; m2 /= 9;
 	vec3 sigma = sqrt(m2 - m1*m1);
+	const float sigmaNoVarianceThreshold = 0.0001;
+	if (abs(sigma.r) < sigmaNoVarianceThreshold || abs(sigma.g) < sigmaNoVarianceThreshold || abs(sigma.b) < sigmaNoVarianceThreshold) {
+		return nearColor0;
+	}
 	vec3 boxMin = m1 - sigma;
 	vec3 boxMax = m1 + sigma;
 	return clamp(color, boxMin, boxMax);
