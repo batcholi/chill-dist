@@ -803,18 +803,17 @@ struct RayPayload {
 	}
 	// Compute normal for a box (this method works for boxes with arbitrary width/height/depth)
 	#define CLOSEST_HIT_BOX_INTERSECTION_COMPUTE_NORMAL \
-		uint BOX_FACE; vec3 BOX_NORMAL; vec2 BOX_UV; {\
+		vec3 BOX_SIZE = AABB_MAX - AABB_MIN; uint BOX_FACE; vec3 BOX_NORMAL; vec2 BOX_UV; vec2 BOX_COORD; {\
 			const float threshold = EPSILON * ray.totalDistanceFromEye * 0.05;\
 			const vec3 absMin = abs(ray.localPosition.xyz - (gl_HitKindEXT == BOX_INTERSECTION_KIND_OUTSIDE_FACE? AABB_MIN.xyz : AABB_MAX.xyz));\
 			const vec3 absMax = abs(ray.localPosition.xyz - (gl_HitKindEXT == BOX_INTERSECTION_KIND_OUTSIDE_FACE? AABB_MAX.xyz : AABB_MIN.xyz));\
-				 if (absMin.x < threshold) {BOX_FACE = 0; BOX_NORMAL.xyz = vec3(-1, 0, 0); BOX_UV = vec2(ray.localPosition.zy)*vec2(1,-1);}\
-			else if (absMin.y < threshold) {BOX_FACE = 1; BOX_NORMAL.xyz = vec3( 0,-1, 0); BOX_UV = vec2(ray.localPosition.xz)*-1;}\
-			else if (absMin.z < threshold) {BOX_FACE = 2; BOX_NORMAL.xyz = vec3( 0, 0,-1); BOX_UV = vec2(ray.localPosition.xy)*vec2(-1,-1);}\
-			else if (absMax.x < threshold) {BOX_FACE = 3; BOX_NORMAL.xyz = vec3( 1, 0, 0); BOX_UV = vec2(ray.localPosition.zy)*vec2(-1,-1);}\
-			else if (absMax.y < threshold) {BOX_FACE = 4; BOX_NORMAL.xyz = vec3( 0, 1, 0); BOX_UV = vec2(ray.localPosition.xz);}\
-			else if (absMax.z < threshold) {BOX_FACE = 5; BOX_NORMAL.xyz = vec3( 0, 0, 1); BOX_UV = vec2(ray.localPosition.xy)*vec2(1,-1);}\
+				 if (absMin.x < threshold) {BOX_FACE = 0; BOX_NORMAL.xyz = vec3(-1, 0, 0); BOX_COORD = vec2(ray.localPosition.zy) * vec2(+1,-1) - vec2(0.5); BOX_UV = BOX_COORD / BOX_SIZE.zy;}\
+			else if (absMin.y < threshold) {BOX_FACE = 1; BOX_NORMAL.xyz = vec3( 0,-1, 0); BOX_COORD = vec2(ray.localPosition.xz) * vec2(-1,-1) - vec2(0.5); BOX_UV = BOX_COORD / BOX_SIZE.xz;}\
+			else if (absMin.z < threshold) {BOX_FACE = 2; BOX_NORMAL.xyz = vec3( 0, 0,-1); BOX_COORD = vec2(ray.localPosition.xy) * vec2(-1,-1) - vec2(0.5); BOX_UV = BOX_COORD / BOX_SIZE.xy;}\
+			else if (absMax.x < threshold) {BOX_FACE = 3; BOX_NORMAL.xyz = vec3( 1, 0, 0); BOX_COORD = vec2(ray.localPosition.zy) * vec2(-1,-1) - vec2(0.5); BOX_UV = BOX_COORD / BOX_SIZE.zy;}\
+			else if (absMax.y < threshold) {BOX_FACE = 4; BOX_NORMAL.xyz = vec3( 0, 1, 0); BOX_COORD = vec2(ray.localPosition.xz) * vec2(+1,+1) - vec2(0.5); BOX_UV = BOX_COORD / BOX_SIZE.xz;}\
+			else if (absMax.z < threshold) {BOX_FACE = 5; BOX_NORMAL.xyz = vec3( 0, 0, 1); BOX_COORD = vec2(ray.localPosition.xy) * vec2(+1,-1) - vec2(0.5); BOX_UV = BOX_COORD / BOX_SIZE.xy;}\
 			ray.normal = normalize(mat3(gl_ObjectToWorldEXT) * BOX_NORMAL);\
-			BOX_UV -= vec2(0.5);\
 			if (gl_HitKindEXT == BOX_INTERSECTION_KIND_INSIDE_FACE) {\
 				BOX_FACE = (BOX_FACE + 3) % 6;\
 			}\
@@ -852,7 +851,7 @@ struct RayPayload {
 	}\
 	if (renderer.aim.aimGeometryID == ray.index.x && renderer.aim.voxelIndex == ray.index.y) {\
 		vec2 uv = abs(fract(BOX_UV) - 0.5);\
-		float thickness = 0.0015 * max(1, ray.totalDistanceFromEye);\
+		float thickness = 0.0018 * max(1, ray.totalDistanceFromEye) / min(min(BOX_SIZE.x,BOX_SIZE.y),BOX_SIZE.z);\
 		float border = smoothstep(0.5-thickness, 0.5, max(uv.x, uv.y));\
 		ray.color.rgb = mix(ray.color.rgb, vec3(0), border);\
 	}\
