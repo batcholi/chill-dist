@@ -1406,10 +1406,9 @@ float SimplexFractal(vec3 pos, int octaves) {
 }
 float WaterWaves(vec3 pos) {
 	return 0
-		+ Simplex(vec3(pos.xz*0.1, float(renderer.timestamp - pos.z)*0.5))*3
-		+ Simplex(vec3(pos.xz, float(renderer.timestamp - pos.z)))*0.5
-		+ Simplex(vec3(pos.xz*vec2(4, 16), float(renderer.timestamp - pos.z*2)))*0.2
-		+ Simplex(vec3(pos.xz*100, float(renderer.timestamp)))*0.01
+		+ Simplex(vec3(pos.xz*0.05, float(renderer.timestamp - pos.z*0.5)*0.5))*2
+		+ Simplex(vec3(pos.xz*0.3, float(renderer.timestamp - pos.z)))
+		+ Simplex(vec3(pos.xz*vec2(2, 4), float(renderer.timestamp - pos.z*2)))*0.5
 	;
 }
 void main() {
@@ -1432,7 +1431,7 @@ void main() {
 			ray.normal = vec3(0,1,0);
 			APPLY_NORMAL_BUMP_NOISE(WaterWaves, ray.worldPosition, ray.normal, 0.005)
 			APPLY_FRESNEL_REFLECTION
-			ray.color.a = mix(ray.color.a, 1.0, clamp(pow(ray.reflection, 0.5), 0, 1));
+			ray.color.a = mix(ray.color.a, 1.0, clamp(ray.reflection, 0, 1));
 		} else {
 			// Underwater
 			if (dot(gl_WorldRayDirectionEXT, vec3(0,1,0)) > 0) {

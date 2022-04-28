@@ -1379,8 +1379,11 @@ void main() {
 		float falloffPow = ray.falloffPow;
 		if (Refract(rayDirection, rayNormal, ray.distanceToSurface > 0 ? 1 : rayIor)) {
 			float maxRayDistance = cam.zFar;
-			bool refractFromInside = ray.distanceToSurface > 0;
-			if (refractFromInside) {
+			bool aboveWater = ray.distanceToSurface == 0;
+			bool underWater = ray.distanceToSurface != 0;
+			bool underWaterLookingDown = ray.distanceToSurface == -1;
+			bool underWaterLookingUp = ray.distanceToSurface > 0;
+			if (underWaterLookingUp) {
 				// Underwater, From camera to surface
 				rayPosition = initialRayPosition;
 				maxRayDistance = ray.distanceToSurface;
@@ -1390,10 +1393,12 @@ void main() {
 			// Launch ray to surface or to underwater objects (should exclude water blocks)
 			ray.distanceToSurface = -1;
 			traceRayEXT(tlas, 0, RENDERABLE_TYPE_ALL, 0/*rayType*/, SBT_HITGROUPS_PER_GEOMETRY/*nbRayTypes*/, 0/*missIndex*/, rayPosition, cam.zNear, rayDirection, maxRayDistance, RAY_PAYLOAD_PRIMARY);
-			depthRay = ray;
-			float falloff = falloffDistance > 0 ? pow(smoothstep(falloffDistance, 0, (ray.hitDistance>0? distance(ray.worldPosition, initialRayPosition) : maxRayDistance)), falloffPow) : 1;
-			// Surface refraction from underwater
-			if (refractFromInside && ray.hitDistance == 0) {
+			if (underWater) {
+				depthRay = ray;
+			}
+			float falloff = falloffDistance > 0 ? pow(smoothstep(falloffDistance, 0, (ray.hitDistance>0? distance(ray.worldPosition, underWater? initialRayPosition : depthRay.worldPosition) : maxRayDistance)), falloffPow) : 1;
+			// Surface refraction from underWater
+			if (underWaterLookingUp && ray.hitDistance == 0) {
 				ray.distanceToSurface = -1;
 				rayPosition += rayDirection * maxRayDistance;
 				Refract(rayDirection, rayNormal, 1.0 / rayIor);
