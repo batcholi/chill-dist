@@ -1279,26 +1279,27 @@ BUFFER_REFERENCE_STRUCT_READONLY(16) ClientChunkData {
 	aligned_VkDeviceAddress minusZ;
 	// blocks
 	BlockData blocks[MAX_BLOCKS_PER_CHUNK];
+	aligned_uint16_t blockTypes[MAX_BLOCKS_PER_CHUNK];
 };
-STATIC_ASSERT_ALIGNED16_SIZE(ClientChunkData, 32 + 2*MAX_BLOCKS_PER_CHUNK);
+STATIC_ASSERT_ALIGNED16_SIZE(ClientChunkData, 32 + 4*MAX_BLOCKS_PER_CHUNK);
 
 #ifndef __cplusplus
 	//
 	BlockData GetBlockData(inout uint64_t chunkID, inout ivec3 pos) {
 		ClientChunkData chunk = ClientChunkData(chunkID); // Because of a bug in AMD drivers, we cannot pass the buffer_reference as an argument to a function, instead we pass its address
-		if (pos.x < 0 && chunk.minusX != 0) {
+		while (pos.x < 0 && chunk.minusX != 0) {
 			chunk = ClientChunkData(chunk.minusX);
 			pos.x += MAX_BLOCK_X;
 		}
-		if (pos.z < 0 && chunk.minusZ != 0) {
+		while (pos.z < 0 && chunk.minusZ != 0) {
 			chunk = ClientChunkData(chunk.minusZ);
 			pos.z += MAX_BLOCK_Z;
 		}
-		if (pos.x >= MAX_BLOCK_X && chunk.plusX != 0) {
+		while (pos.x >= MAX_BLOCK_X && chunk.plusX != 0) {
 			chunk = ClientChunkData(chunk.plusX);
 			pos.x -= MAX_BLOCK_X;
 		}
-		if (pos.z >= MAX_BLOCK_Z && chunk.plusZ != 0) {
+		while (pos.z >= MAX_BLOCK_Z && chunk.plusZ != 0) {
 			chunk = ClientChunkData(chunk.plusZ);
 			pos.z -= MAX_BLOCK_Z;
 		}
@@ -1317,6 +1318,30 @@ STATIC_ASSERT_ALIGNED16_SIZE(ClientChunkData, 32 + 2*MAX_BLOCKS_PER_CHUNK);
 			return BlockData(0); // invalid
 		}
 	#endif
+	uint16_t GetBlockType(inout uint64_t chunkID, inout ivec3 pos) {
+		ClientChunkData chunk = ClientChunkData(chunkID); // Because of a bug in AMD drivers, we cannot pass the buffer_reference as an argument to a function, instead we pass its address
+		while (pos.x < 0 && chunk.minusX != 0) {
+			chunk = ClientChunkData(chunk.minusX);
+			pos.x += MAX_BLOCK_X;
+		}
+		while (pos.z < 0 && chunk.minusZ != 0) {
+			chunk = ClientChunkData(chunk.minusZ);
+			pos.z += MAX_BLOCK_Z;
+		}
+		while (pos.x >= MAX_BLOCK_X && chunk.plusX != 0) {
+			chunk = ClientChunkData(chunk.plusX);
+			pos.x -= MAX_BLOCK_X;
+		}
+		while (pos.z >= MAX_BLOCK_Z && chunk.plusZ != 0) {
+			chunk = ClientChunkData(chunk.plusZ);
+			pos.z -= MAX_BLOCK_Z;
+		}
+		chunkID = uint64_t(chunk); // Because of the AMD bug mentioned above...
+		if (pos.x >= 0 && pos.y >= 0 && pos.z >= 0 && pos.x < MAX_BLOCK_X && pos.y < MAX_BLOCK_Y && pos.z < MAX_BLOCK_Z) {
+			return chunk.blockTypes[BlockIndex(pos.x, pos.y, pos.z)];
+		}
+		return uint16_t(0); // invalid
+	}
 #endif
 
 
@@ -1417,7 +1442,8 @@ void main() {
 		CLOSEST_HIT_BOX_INTERSECTION_COMPUTE_NORMAL
 		
 		ivec3 thisBlockPos = AABB_CENTER_INT;
-		BlockData thisBlockData = ClientChunkData(VOXEL.extra).blocks[BlockIndex(thisBlockPos.x, thisBlockPos.y, thisBlockPos.z)];
+		uint32_t thisBlockIndex = BlockIndex(thisBlockPos.x, thisBlockPos.y, thisBlockPos.z);
+		BlockData thisBlockData = ClientChunkData(VOXEL.extra).blocks[thisBlockIndex];
 		uint waterDepth = GetTransparentBlockExtra(thisBlockData);
 		
 		ray.color = vec4(vec3(0.01,0.05,0.07) * renderer.skyLightColor, 0.3);

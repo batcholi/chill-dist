@@ -1279,26 +1279,27 @@ BUFFER_REFERENCE_STRUCT_READONLY(16) ClientChunkData {
 	aligned_VkDeviceAddress minusZ;
 	// blocks
 	BlockData blocks[MAX_BLOCKS_PER_CHUNK];
+	aligned_uint16_t blockTypes[MAX_BLOCKS_PER_CHUNK];
 };
-STATIC_ASSERT_ALIGNED16_SIZE(ClientChunkData, 32 + 2*MAX_BLOCKS_PER_CHUNK);
+STATIC_ASSERT_ALIGNED16_SIZE(ClientChunkData, 32 + 4*MAX_BLOCKS_PER_CHUNK);
 
 #ifndef __cplusplus
 	//
 	BlockData GetBlockData(inout uint64_t chunkID, inout ivec3 pos) {
 		ClientChunkData chunk = ClientChunkData(chunkID); // Because of a bug in AMD drivers, we cannot pass the buffer_reference as an argument to a function, instead we pass its address
-		if (pos.x < 0 && chunk.minusX != 0) {
+		while (pos.x < 0 && chunk.minusX != 0) {
 			chunk = ClientChunkData(chunk.minusX);
 			pos.x += MAX_BLOCK_X;
 		}
-		if (pos.z < 0 && chunk.minusZ != 0) {
+		while (pos.z < 0 && chunk.minusZ != 0) {
 			chunk = ClientChunkData(chunk.minusZ);
 			pos.z += MAX_BLOCK_Z;
 		}
-		if (pos.x >= MAX_BLOCK_X && chunk.plusX != 0) {
+		while (pos.x >= MAX_BLOCK_X && chunk.plusX != 0) {
 			chunk = ClientChunkData(chunk.plusX);
 			pos.x -= MAX_BLOCK_X;
 		}
-		if (pos.z >= MAX_BLOCK_Z && chunk.plusZ != 0) {
+		while (pos.z >= MAX_BLOCK_Z && chunk.plusZ != 0) {
 			chunk = ClientChunkData(chunk.plusZ);
 			pos.z -= MAX_BLOCK_Z;
 		}
