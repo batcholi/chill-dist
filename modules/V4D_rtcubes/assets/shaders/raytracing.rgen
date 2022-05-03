@@ -756,11 +756,13 @@ struct RayPayload {
 	float hitDistance;
 	vec3 normal; // world-space
 	float reflection;
-	vec3 worldPosition;
-	float totalDistanceFromEye;
 	uvec2 index;
 	int tlasInstanceIndex;
 	float ior; // Index Of Refraction
+	float totalDistanceFromEye;
+	float t2;
+	// float _unused_1;
+	// float _unused_2;
 };
 #ifdef SHADER_RGEN
 	layout(location = RAY_PAYLOAD_PRIMARY) rayPayloadEXT RayPayload ray;
@@ -834,7 +836,6 @@ struct RayPayload {
 	ray.hitDistance = _t;\
 	ray.totalDistanceFromEye += _t;\
 	ray.localPosition = gl_ObjectRayOriginEXT + gl_ObjectRayDirectionEXT * ray.hitDistance;\
-	ray.worldPosition = gl_WorldRayOriginEXT + gl_WorldRayDirectionEXT * ray.hitDistance;\
 	ray.index = uvec2(AIM_GEOMETRY_ID, gl_PrimitiveID);\
 	ray.tlasInstanceIndex = gl_InstanceID;\
 	ray.color = vec4(vec3(0.5), 1.0);\
@@ -850,6 +851,7 @@ struct RayPayload {
 		ray.normal = normalize(mix(-gl_WorldRayDirectionEXT, normalize(cross(-gl_WorldRayDirectionEXT, tmp)), 1.0-bias));\
 	}\
 	ray.normal = DoubleSidedNormals(ray.normal);\
+	ray.t2 = max(ray.t2, ray.hitDistance);\
 }
 
 #define CLOSEST_HIT_BOX_AIM_WIREFRAME {\
@@ -905,7 +907,7 @@ float sdfSphere(vec3 p, float r) {
 }
 
 #define APPLY_FRESNEL_REFLECTION {\
-	ray.reflection = Fresnel((camera.viewMatrix * vec4(ray.worldPosition, 1)).xyz, normalize(WORLD2VIEWNORMAL * ray.normal), ray.ior);\
+	ray.reflection = Fresnel((camera.viewMatrix * vec4(gl_WorldRayOriginEXT + gl_WorldRayDirectionEXT * ray.hitDistance, 1)).xyz, normalize(WORLD2VIEWNORMAL * ray.normal), ray.ior);\
 }
 
 #define APPLY_STANDARD_BLOCK_LIGHTING {\
@@ -1382,95 +1384,66 @@ void main() {
 	ray.hitDistance = 0;
 	traceRayEXT(tlas, 0, RENDERABLE_ALL, 0/*rayType*/, SBT_HITGROUPS_PER_GEOMETRY/*nbRayTypes*/, 0/*missIndex*/, rayPosition, cam.zNear, rayDirection, cam.zFar, RAY_PAYLOAD_PRIMARY);
 	RayPayload firstRay = ray;
-	RayPayload depthRay = ray;
-	RayPayload aimRay = ray;
+	vec3 firstRayHitWorldPosition = initialRayPosition + initialRayDirection * firstRay.hitDistance;
 	rayPosition += rayDirection * ray.hitDistance;
 	float reflection = firstRay.reflection;
 	vec3 reflectDirection = normalize(reflect(rayDirection, firstRay.normal));
 	color = ray.color.rgb;
 	
-	// // Transparent / Refraction / Underwater
-	// if (ray.hitDistance > 0 && ray.color.a < 1) {
-	// 	float rayIor = ray.ior;
-	// 	vec3 rayNormal = normalize(ray.normal);
-	// 	float falloffDistance = ray.falloffDistance;
-	// 	float falloffPow = ray.falloffPow;
-	// 	if (Refract(rayDirection, rayNormal, ray.distanceToSurface > 0 ? 1 : rayIor)) {
-	// 		float maxRayDistance = cam.zFar;
-	// 		bool aboveWater = ray.distanceToSurface == 0;
-	// 		bool underWater = ray.underwater;
-	// 		// bool underWaterLookingDown = ray.distanceToSurface == -1;
-	// 		bool underWaterLookingUp = ray.distanceToSurface > 0;
-	// 		if (underWaterLookingUp) {
-	// 			// Underwater, From camera to surface
-	// 			rayPosition = initialRayPosition;
-	// 			maxRayDistance = ray.distanceToSurface;
-	// 		} else if (falloffDistance > 0) {
-	// 			maxRayDistance = falloffDistance;
-	// 		}
-	// 		// Launch ray to surface or to underwater objects (should exclude water blocks)
-	// 		ray.hitDistance = 0;
-	// 		ray.underwater = true;
-	// 		traceRayEXT(tlas, 0, ~RENDERABLE_WATER, 0/*rayType*/, SBT_HITGROUPS_PER_GEOMETRY/*nbRayTypes*/, 0/*missIndex*/, rayPosition, cam.zNear, rayDirection, maxRayDistance, RAY_PAYLOAD_PRIMARY);
-	// 		if (underWater) {
-	// 			depthRay = ray;
-	// 		}
-	// 		float falloff = falloffDistance > 0 ? pow(smoothstep(falloffDistance, 0, (ray.hitDistance>0? distance(ray.worldPosition, underWater? initialRayPosition : depthRay.worldPosition) : maxRayDistance)), falloffPow) : 1;
-	// 		// Surface refraction from underWater
-	// 		if (underWaterLookingUp && ray.hitDistance == -1) {
-	// 			rayPosition += rayDirection * maxRayDistance;
-	// 			Refract(rayDirection, rayNormal, 1.0 / rayIor);
-	// 			// Launch ray from surface to other objects (should exclude water blocks)
-	// 			ray.hitDistance = 0;
-	// 			ray.underwater = true;
-	// 			traceRayEXT(tlas, 0, ~RENDERABLE_WATER, 0/*rayType*/, SBT_HITGROUPS_PER_GEOMETRY/*nbRayTypes*/, 0/*missIndex*/, rayPosition, cam.zNear, rayDirection, cam.zFar, RAY_PAYLOAD_PRIMARY);
-	// 			ray.color.rgb = mix(ray.color.rgb, firstRay.color.rgb, firstRay.color.a);
-	// 			reflection = 0;
-	// 		}
-	// 		color = mix(ray.color.rgb, color, clamp(firstRay.color.a, 0, 1));
-	// 		color = mix(firstRay.color.rgb*firstRay.color.a, color, falloff);
-	// 	}
-	// }
+	// Transparent / Refraction
+	float translucency = 1.0 - clamp(ray.color.a, 0.01, 1);
+	while (ray.hitDistance > 0 && translucency > 0.01) {
+		Refract(rayDirection, normalize(ray.normal), ray.ior);
+		ray.hitDistance = 0;
+		traceRayEXT(tlas, 0, RENDERABLE_ALL, 0/*rayType*/, SBT_HITGROUPS_PER_GEOMETRY/*nbRayTypes*/, 0/*missIndex*/, rayPosition, cam.zNear, rayDirection, cam.zFar, RAY_PAYLOAD_PRIMARY);
+		color = mix(color, ray.color.rgb, translucency);
+		if (ray.hitDistance == -1) break;
+		translucency *= 1.0 - clamp(ray.color.a, 0.01, 1);
+		rayPosition += rayDirection * ray.t2;
+	}
 	
 	// Reflection
-	while (reflection > 0.01) {
-		if (dot(reflectDirection, reflectDirection) == 0) break;
-		ray.hitDistance = 0;
-		traceRayEXT(tlas, 0, RENDERABLE_ALL, 0/*rayType*/, SBT_HITGROUPS_PER_GEOMETRY/*nbRayTypes*/, 0/*missIndex*/, rayPosition, cam.zNear, reflectDirection, cam.zFar, RAY_PAYLOAD_PRIMARY);
-		color = mix(color, ray.color.rgb, clamp(reflection, 0, 1));
-		reflection *= clamp(ray.reflection, 0, 0.5);
-		rayPosition += reflectDirection * ray.hitDistance;
-		reflectDirection = normalize(reflect(reflectDirection, ray.normal));
+	if (ray.hitDistance > 0) {
+		rayPosition = firstRayHitWorldPosition;
+		while (reflection > 0.01) {
+			if (dot(reflectDirection, reflectDirection) == 0) break;
+			ray.hitDistance = 0;
+			traceRayEXT(tlas, 0, RENDERABLE_ALL, 0/*rayType*/, SBT_HITGROUPS_PER_GEOMETRY/*nbRayTypes*/, 0/*missIndex*/, rayPosition, cam.zNear, reflectDirection, cam.zFar, RAY_PAYLOAD_PRIMARY);
+			color = mix(color, ray.color.rgb, clamp(reflection, 0, 1));
+			reflection *= clamp(ray.reflection, 0, 0.5);
+			rayPosition += reflectDirection * ray.hitDistance;
+			reflectDirection = normalize(reflect(reflectDirection, ray.normal));
+		}
 	}
 	
 	// Aim
 	if (isMiddleOfScreen) {
-		renderer.aim.localPosition = aimRay.localPosition;
-		renderer.aim.aimGeometryID = aimRay.index.x;
-		renderer.aim.worldSpaceHitNormal = aimRay.normal;
-		renderer.aim.voxelIndex = aimRay.index.y;
-		renderer.aim.worldSpacePosition = aimRay.worldPosition;
-		renderer.aim.hitDistance = aimRay.hitDistance;
-		renderer.aim.color = aimRay.color;
+		renderer.aim.localPosition = firstRay.localPosition;
+		renderer.aim.aimGeometryID = firstRay.index.x;
+		renderer.aim.worldSpaceHitNormal = firstRay.normal;
+		renderer.aim.voxelIndex = firstRay.index.y;
+		renderer.aim.worldSpacePosition = firstRayHitWorldPosition;
+		renderer.aim.hitDistance = firstRay.hitDistance;
+		renderer.aim.color = firstRay.color;
 	}
 	
 	// Write Motion Vectors
-	if (depthRay.hitDistance > 0 && depthRay.tlasInstanceIndex > -1) {
-		mat4 mvp = cameras[pushConstant.cameraIndex].projectionMatrix * cameras[pushConstant.cameraIndex].viewMatrix * mat4(transpose(renderer.tlasInstances[depthRay.tlasInstanceIndex].transform));
-		cameras[pushConstant.cameraIndex].mvpBuffer[depthRay.tlasInstanceIndex].mvp = mvp;
-		cameras[pushConstant.cameraIndex].realtimeBuffer[depthRay.tlasInstanceIndex].mvpFrameIndex = cameras[pushConstant.cameraIndex].frameIndex;
-		vec4 ndc = mvp * vec4(depthRay.localPosition, 1);
+	if (firstRay.hitDistance > 0 && firstRay.tlasInstanceIndex > -1) {
+		mat4 mvp = cameras[pushConstant.cameraIndex].projectionMatrix * cameras[pushConstant.cameraIndex].viewMatrix * mat4(transpose(renderer.tlasInstances[firstRay.tlasInstanceIndex].transform));
+		cameras[pushConstant.cameraIndex].mvpBuffer[firstRay.tlasInstanceIndex].mvp = mvp;
+		cameras[pushConstant.cameraIndex].realtimeBuffer[firstRay.tlasInstanceIndex].mvpFrameIndex = cameras[pushConstant.cameraIndex].frameIndex;
+		vec4 ndc = mvp * vec4(firstRay.localPosition, 1);
 		ndc /= ndc.w;
 		mat4 mvpHistory;
-		if (cameras[pushConstant.cameraIndex].realtimeBufferHistory[depthRay.tlasInstanceIndex].mvpFrameIndex == cameras[pushConstant.cameraIndex].frameIndex - 1) {
-			mvpHistory = cameras[pushConstant.cameraIndex].mvpBufferHistory[depthRay.tlasInstanceIndex].mvp;
+		if (cameras[pushConstant.cameraIndex].realtimeBufferHistory[firstRay.tlasInstanceIndex].mvpFrameIndex == cameras[pushConstant.cameraIndex].frameIndex - 1) {
+			mvpHistory = cameras[pushConstant.cameraIndex].mvpBufferHistory[firstRay.tlasInstanceIndex].mvp;
 		} else {
 			mvpHistory = cameras[pushConstant.cameraIndex].reprojectionMatrix * mvp;
 		}
-		vec4 ndc_history = mvpHistory * vec4(depthRay.localPosition, 1);
+		vec4 ndc_history = mvpHistory * vec4(firstRay.localPosition, 1);
 		ndc_history /= ndc_history.w;
 		motion = ndc_history.xyz - ndc.xyz;
-		depth = clamp(GetFragDepthFromWorldSpacePosition(depthRay.worldPosition), 0, 1);
+		depth = clamp(GetFragDepthFromWorldSpacePosition(firstRayHitWorldPosition), 0, 1);
 	} else {
 		vec4 ndc = vec4(uv * 2 - 1, 0, 1);
 		vec4 ndc_history = cameras[pushConstant.cameraIndex].reprojectionMatrix * ndc;

@@ -756,11 +756,13 @@ struct RayPayload {
 	float hitDistance;
 	vec3 normal; // world-space
 	float reflection;
-	vec3 worldPosition;
-	float totalDistanceFromEye;
 	uvec2 index;
 	int tlasInstanceIndex;
 	float ior; // Index Of Refraction
+	float totalDistanceFromEye;
+	float t2;
+	// float _unused_1;
+	// float _unused_2;
 };
 #ifdef SHADER_RGEN
 	layout(location = RAY_PAYLOAD_PRIMARY) rayPayloadEXT RayPayload ray;
@@ -834,7 +836,6 @@ struct RayPayload {
 	ray.hitDistance = _t;\
 	ray.totalDistanceFromEye += _t;\
 	ray.localPosition = gl_ObjectRayOriginEXT + gl_ObjectRayDirectionEXT * ray.hitDistance;\
-	ray.worldPosition = gl_WorldRayOriginEXT + gl_WorldRayDirectionEXT * ray.hitDistance;\
 	ray.index = uvec2(AIM_GEOMETRY_ID, gl_PrimitiveID);\
 	ray.tlasInstanceIndex = gl_InstanceID;\
 	ray.color = vec4(vec3(0.5), 1.0);\
@@ -850,6 +851,7 @@ struct RayPayload {
 		ray.normal = normalize(mix(-gl_WorldRayDirectionEXT, normalize(cross(-gl_WorldRayDirectionEXT, tmp)), 1.0-bias));\
 	}\
 	ray.normal = DoubleSidedNormals(ray.normal);\
+	ray.t2 = max(ray.t2, ray.hitDistance);\
 }
 
 #define CLOSEST_HIT_BOX_AIM_WIREFRAME {\
@@ -905,7 +907,7 @@ float sdfSphere(vec3 p, float r) {
 }
 
 #define APPLY_FRESNEL_REFLECTION {\
-	ray.reflection = Fresnel((camera.viewMatrix * vec4(ray.worldPosition, 1)).xyz, normalize(WORLD2VIEWNORMAL * ray.normal), ray.ior);\
+	ray.reflection = Fresnel((camera.viewMatrix * vec4(gl_WorldRayOriginEXT + gl_WorldRayDirectionEXT * ray.hitDistance, 1)).xyz, normalize(WORLD2VIEWNORMAL * ray.normal), ray.ior);\
 }
 
 #define APPLY_STANDARD_BLOCK_LIGHTING {\
