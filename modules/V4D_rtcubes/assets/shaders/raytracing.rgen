@@ -761,11 +761,6 @@ struct RayPayload {
 	uvec2 index;
 	int tlasInstanceIndex;
 	float ior; // Index Of Refraction
-	// For water
-	float distanceToSurface;
-	float falloffDistance;
-	float falloffPow;
-	bool underwater;
 };
 #ifdef SHADER_RGEN
 	layout(location = RAY_PAYLOAD_PRIMARY) rayPayloadEXT RayPayload ray;
@@ -845,10 +840,6 @@ struct RayPayload {
 	ray.color = vec4(vec3(0.5), 1.0);\
 	ray.reflection = 0;\
 	ray.ior = 1.45;\
-	ray.distanceToSurface = 0;\
-	ray.falloffDistance = 0;\
-	ray.falloffPow = 0;\
-	ray.underwater = false;\
 }
 #define CLOSEST_HIT_BEGIN CLOSEST_HIT_BEGIN_T(gl_HitTEXT)
 #define CLOSEST_HIT_END {\
@@ -1386,11 +1377,9 @@ void main() {
 	
 	// Initialize ray payload
 	ray.totalDistanceFromEye = 0;
-	ray.distanceToSurface = 0;
 	ray.ior = 1;
 	// Launch Primary Ray
 	ray.hitDistance = 0;
-	ray.underwater = false;
 	traceRayEXT(tlas, 0, RENDERABLE_ALL, 0/*rayType*/, SBT_HITGROUPS_PER_GEOMETRY/*nbRayTypes*/, 0/*missIndex*/, rayPosition, cam.zNear, rayDirection, cam.zFar, RAY_PAYLOAD_PRIMARY);
 	RayPayload firstRay = ray;
 	RayPayload depthRay = ray;
@@ -1447,7 +1436,6 @@ void main() {
 	while (reflection > 0.01) {
 		if (dot(reflectDirection, reflectDirection) == 0) break;
 		ray.hitDistance = 0;
-		ray.underwater = false;
 		traceRayEXT(tlas, 0, RENDERABLE_ALL, 0/*rayType*/, SBT_HITGROUPS_PER_GEOMETRY/*nbRayTypes*/, 0/*missIndex*/, rayPosition, cam.zNear, reflectDirection, cam.zFar, RAY_PAYLOAD_PRIMARY);
 		color = mix(color, ray.color.rgb, clamp(reflection, 0, 1));
 		reflection *= clamp(ray.reflection, 0, 0.5);

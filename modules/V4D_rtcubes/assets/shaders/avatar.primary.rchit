@@ -434,6 +434,20 @@ float Fresnel(const vec3 position, const vec3 normal, const float indexOfRefract
 	}
 }
 
+bool Refract(inout vec3 rayDirection, in vec3 surfaceNormal, in float iOR) {
+	const float vDotN = dot(rayDirection, surfaceNormal);
+	const float niOverNt = vDotN > 0 ? iOR : 1.0 / iOR;
+	vec3 dir = rayDirection;
+	rayDirection = refract(rayDirection, -sign(vDotN) * surfaceNormal, niOverNt);
+	if (dot(rayDirection,rayDirection) > 0) {
+		rayDirection = normalize(rayDirection);
+		return true;
+	} else {
+		rayDirection = normalize(reflect(dir, -sign(vDotN) * surfaceNormal));
+	}
+	return false;
+}
+
 vec3 ApplyToneMapping(in vec3 in_color) {
 	vec3 color = in_color;
 	
@@ -747,11 +761,6 @@ struct RayPayload {
 	uvec2 index;
 	int tlasInstanceIndex;
 	float ior; // Index Of Refraction
-	// For water
-	float distanceToSurface;
-	float falloffDistance;
-	float falloffPow;
-	bool underwater;
 };
 #ifdef SHADER_RGEN
 	layout(location = RAY_PAYLOAD_PRIMARY) rayPayloadEXT RayPayload ray;
@@ -831,10 +840,6 @@ struct RayPayload {
 	ray.color = vec4(vec3(0.5), 1.0);\
 	ray.reflection = 0;\
 	ray.ior = 1.45;\
-	ray.distanceToSurface = 0;\
-	ray.falloffDistance = 0;\
-	ray.falloffPow = 0;\
-	ray.underwater = false;\
 }
 #define CLOSEST_HIT_BEGIN CLOSEST_HIT_BEGIN_T(gl_HitTEXT)
 #define CLOSEST_HIT_END {\

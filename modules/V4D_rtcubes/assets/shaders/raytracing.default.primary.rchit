@@ -761,11 +761,6 @@ struct RayPayload {
 	uvec2 index;
 	int tlasInstanceIndex;
 	float ior; // Index Of Refraction
-	// For water
-	float distanceToSurface;
-	float falloffDistance;
-	float falloffPow;
-	bool underwater;
 };
 #ifdef SHADER_RGEN
 	layout(location = RAY_PAYLOAD_PRIMARY) rayPayloadEXT RayPayload ray;
@@ -845,10 +840,6 @@ struct RayPayload {
 	ray.color = vec4(vec3(0.5), 1.0);\
 	ray.reflection = 0;\
 	ray.ior = 1.45;\
-	ray.distanceToSurface = 0;\
-	ray.falloffDistance = 0;\
-	ray.falloffPow = 0;\
-	ray.underwater = false;\
 }
 #define CLOSEST_HIT_BEGIN CLOSEST_HIT_BEGIN_T(gl_HitTEXT)
 #define CLOSEST_HIT_END {\
