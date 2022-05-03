@@ -685,15 +685,15 @@ vec3 RandomInUnitSphere(inout uint seed) {
 
 /////////////////////
 
-// #define RENDERABLE_TYPE_xxx (1u<< 0)
-// #define RENDERABLE_TYPE_xxx (1u<< 1)
-// #define RENDERABLE_TYPE_xxx (1u<< 2)
-// #define RENDERABLE_TYPE_xxx (1u<< 3)
-// #define RENDERABLE_TYPE_xxx (1u<< 4)
-// #define RENDERABLE_TYPE_xxx (1u<< 5)
-// #define RENDERABLE_TYPE_xxx (1u<< 6)
-// #define RENDERABLE_TYPE_xxx (1u<< 7)
-#define RENDERABLE_TYPE_ALL 0xff
+#define RENDERABLE_SELF (1u<< 0)
+#define RENDERABLE_SOLID (1u<< 1)
+#define RENDERABLE_WATER (1u<< 2)
+#define RENDERABLE_MOB (1u<< 3)
+#define RENDERABLE_CLUTTER (1u<< 4)
+// #define RENDERABLE_ (1u<< 5)
+// #define RENDERABLE_ (1u<< 6)
+// #define RENDERABLE_ (1u<< 7)
+#define RENDERABLE_ALL 0xff
 
 #define SET1_BINDING_TLAS 0
 #define SET1_BINDING_RENDERER_DATA 1
@@ -748,9 +748,10 @@ struct RayPayload {
 	int tlasInstanceIndex;
 	float ior; // Index Of Refraction
 	// For water
-	float distanceToSurface; // distance to surface when underwater. Also used as indication of second ray when in rahit for water (!= 0)
+	float distanceToSurface;
 	float falloffDistance;
 	float falloffPow;
+	bool underwater;
 };
 #ifdef SHADER_RGEN
 	layout(location = RAY_PAYLOAD_PRIMARY) rayPayloadEXT RayPayload ray;
@@ -833,6 +834,7 @@ struct RayPayload {
 	ray.distanceToSurface = 0;\
 	ray.falloffDistance = 0;\
 	ray.falloffPow = 0;\
+	ray.underwater = false;\
 }
 #define CLOSEST_HIT_BEGIN CLOSEST_HIT_BEGIN_T(gl_HitTEXT)
 #define CLOSEST_HIT_END {\
@@ -1318,6 +1320,30 @@ STATIC_ASSERT_ALIGNED16_SIZE(ClientChunkData, 32 + 4*MAX_BLOCKS_PER_CHUNK);
 			return BlockData(0); // invalid
 		}
 	#endif
+	uint16_t GetBlockType(inout uint64_t chunkID, inout ivec3 pos) {
+		ClientChunkData chunk = ClientChunkData(chunkID); // Because of a bug in AMD drivers, we cannot pass the buffer_reference as an argument to a function, instead we pass its address
+		while (pos.x < 0 && chunk.minusX != 0) {
+			chunk = ClientChunkData(chunk.minusX);
+			pos.x += MAX_BLOCK_X;
+		}
+		while (pos.z < 0 && chunk.minusZ != 0) {
+			chunk = ClientChunkData(chunk.minusZ);
+			pos.z += MAX_BLOCK_Z;
+		}
+		while (pos.x >= MAX_BLOCK_X && chunk.plusX != 0) {
+			chunk = ClientChunkData(chunk.plusX);
+			pos.x -= MAX_BLOCK_X;
+		}
+		while (pos.z >= MAX_BLOCK_Z && chunk.plusZ != 0) {
+			chunk = ClientChunkData(chunk.plusZ);
+			pos.z -= MAX_BLOCK_Z;
+		}
+		chunkID = uint64_t(chunk); // Because of the AMD bug mentioned above...
+		if (pos.x >= 0 && pos.y >= 0 && pos.z >= 0 && pos.x < MAX_BLOCK_X && pos.y < MAX_BLOCK_Y && pos.z < MAX_BLOCK_Z) {
+			return chunk.blockTypes[BlockIndex(pos.x, pos.y, pos.z)];
+		}
+		return uint16_t(0); // invalid
+	}
 #endif
 
 
