@@ -434,6 +434,20 @@ float Fresnel(const vec3 position, const vec3 normal, const float indexOfRefract
 	}
 }
 
+bool Refract(inout vec3 rayDirection, in vec3 surfaceNormal, in float iOR) {
+	const float vDotN = dot(rayDirection, surfaceNormal);
+	const float niOverNt = vDotN > 0 ? iOR : 1.0 / iOR;
+	vec3 dir = rayDirection;
+	rayDirection = refract(rayDirection, -sign(vDotN) * surfaceNormal, niOverNt);
+	if (dot(rayDirection,rayDirection) > 0) {
+		rayDirection = normalize(rayDirection);
+		return true;
+	} else {
+		rayDirection = normalize(reflect(dir, -sign(vDotN) * surfaceNormal));
+	}
+	return false;
+}
+
 vec3 ApplyToneMapping(in vec3 in_color) {
 	vec3 color = in_color;
 	
@@ -1352,20 +1366,6 @@ STATIC_ASSERT_ALIGNED16_SIZE(ClientChunkData, 32 + 4*MAX_BLOCKS_PER_CHUNK);
 
 layout(set = 1, binding = SET1_BINDING_TLAS) uniform accelerationStructureEXT tlas;
 
-bool Refract(inout vec3 rayDirection, in vec3 surfaceNormal, in float iOR) {
-	const float vDotN = dot(rayDirection, surfaceNormal);
-	const float niOverNt = vDotN > 0 ? iOR : 1.0 / iOR;
-	vec3 dir = rayDirection;
-	rayDirection = refract(rayDirection, -sign(vDotN) * surfaceNormal, niOverNt);
-	if (dot(rayDirection,rayDirection) > 0) {
-		rayDirection = normalize(rayDirection);
-		return true;
-	} else {
-		rayDirection = normalize(reflect(dir, -sign(vDotN) * surfaceNormal));
-	}
-	return false;
-}
-
 void main() {
 	CameraData cam = cameras[pushConstant.cameraIndex];
 	const uint64_t startTime = clockARB();
@@ -1400,48 +1400,48 @@ void main() {
 	vec3 reflectDirection = normalize(reflect(rayDirection, firstRay.normal));
 	color = ray.color.rgb;
 	
-	// Transparent / Refraction / Underwater
-	if (ray.hitDistance > 0 && ray.color.a < 1) {
-		float rayIor = ray.ior;
-		vec3 rayNormal = normalize(ray.normal);
-		float falloffDistance = ray.falloffDistance;
-		float falloffPow = ray.falloffPow;
-		if (Refract(rayDirection, rayNormal, ray.distanceToSurface > 0 ? 1 : rayIor)) {
-			float maxRayDistance = cam.zFar;
-			bool aboveWater = ray.distanceToSurface == 0;
-			bool underWater = ray.underwater;
-			// bool underWaterLookingDown = ray.distanceToSurface == -1;
-			bool underWaterLookingUp = ray.distanceToSurface > 0;
-			if (underWaterLookingUp) {
-				// Underwater, From camera to surface
-				rayPosition = initialRayPosition;
-				maxRayDistance = ray.distanceToSurface;
-			} else if (falloffDistance > 0) {
-				maxRayDistance = falloffDistance;
-			}
-			// Launch ray to surface or to underwater objects (should exclude water blocks)
-			ray.hitDistance = 0;
-			ray.underwater = true;
-			traceRayEXT(tlas, 0, ~RENDERABLE_WATER, 0/*rayType*/, SBT_HITGROUPS_PER_GEOMETRY/*nbRayTypes*/, 0/*missIndex*/, rayPosition, cam.zNear, rayDirection, maxRayDistance, RAY_PAYLOAD_PRIMARY);
-			if (underWater) {
-				depthRay = ray;
-			}
-			float falloff = falloffDistance > 0 ? pow(smoothstep(falloffDistance, 0, (ray.hitDistance>0? distance(ray.worldPosition, underWater? initialRayPosition : depthRay.worldPosition) : maxRayDistance)), falloffPow) : 1;
-			// Surface refraction from underWater
-			if (underWaterLookingUp && ray.hitDistance == -1) {
-				rayPosition += rayDirection * maxRayDistance;
-				Refract(rayDirection, rayNormal, 1.0 / rayIor);
-				// Launch ray from surface to other objects (should exclude water blocks)
-				ray.hitDistance = 0;
-				ray.underwater = true;
-				traceRayEXT(tlas, 0, ~RENDERABLE_WATER, 0/*rayType*/, SBT_HITGROUPS_PER_GEOMETRY/*nbRayTypes*/, 0/*missIndex*/, rayPosition, cam.zNear, rayDirection, cam.zFar, RAY_PAYLOAD_PRIMARY);
-				ray.color.rgb = mix(ray.color.rgb, firstRay.color.rgb, firstRay.color.a);
-				reflection = 0;
-			}
-			color = mix(ray.color.rgb, color, clamp(firstRay.color.a, 0, 1));
-			color = mix(firstRay.color.rgb*firstRay.color.a, color, falloff);
-		}
-	}
+	// // Transparent / Refraction / Underwater
+	// if (ray.hitDistance > 0 && ray.color.a < 1) {
+	// 	float rayIor = ray.ior;
+	// 	vec3 rayNormal = normalize(ray.normal);
+	// 	float falloffDistance = ray.falloffDistance;
+	// 	float falloffPow = ray.falloffPow;
+	// 	if (Refract(rayDirection, rayNormal, ray.distanceToSurface > 0 ? 1 : rayIor)) {
+	// 		float maxRayDistance = cam.zFar;
+	// 		bool aboveWater = ray.distanceToSurface == 0;
+	// 		bool underWater = ray.underwater;
+	// 		// bool underWaterLookingDown = ray.distanceToSurface == -1;
+	// 		bool underWaterLookingUp = ray.distanceToSurface > 0;
+	// 		if (underWaterLookingUp) {
+	// 			// Underwater, From camera to surface
+	// 			rayPosition = initialRayPosition;
+	// 			maxRayDistance = ray.distanceToSurface;
+	// 		} else if (falloffDistance > 0) {
+	// 			maxRayDistance = falloffDistance;
+	// 		}
+	// 		// Launch ray to surface or to underwater objects (should exclude water blocks)
+	// 		ray.hitDistance = 0;
+	// 		ray.underwater = true;
+	// 		traceRayEXT(tlas, 0, ~RENDERABLE_WATER, 0/*rayType*/, SBT_HITGROUPS_PER_GEOMETRY/*nbRayTypes*/, 0/*missIndex*/, rayPosition, cam.zNear, rayDirection, maxRayDistance, RAY_PAYLOAD_PRIMARY);
+	// 		if (underWater) {
+	// 			depthRay = ray;
+	// 		}
+	// 		float falloff = falloffDistance > 0 ? pow(smoothstep(falloffDistance, 0, (ray.hitDistance>0? distance(ray.worldPosition, underWater? initialRayPosition : depthRay.worldPosition) : maxRayDistance)), falloffPow) : 1;
+	// 		// Surface refraction from underWater
+	// 		if (underWaterLookingUp && ray.hitDistance == -1) {
+	// 			rayPosition += rayDirection * maxRayDistance;
+	// 			Refract(rayDirection, rayNormal, 1.0 / rayIor);
+	// 			// Launch ray from surface to other objects (should exclude water blocks)
+	// 			ray.hitDistance = 0;
+	// 			ray.underwater = true;
+	// 			traceRayEXT(tlas, 0, ~RENDERABLE_WATER, 0/*rayType*/, SBT_HITGROUPS_PER_GEOMETRY/*nbRayTypes*/, 0/*missIndex*/, rayPosition, cam.zNear, rayDirection, cam.zFar, RAY_PAYLOAD_PRIMARY);
+	// 			ray.color.rgb = mix(ray.color.rgb, firstRay.color.rgb, firstRay.color.a);
+	// 			reflection = 0;
+	// 		}
+	// 		color = mix(ray.color.rgb, color, clamp(firstRay.color.a, 0, 1));
+	// 		color = mix(firstRay.color.rgb*firstRay.color.a, color, falloff);
+	// 	}
+	// }
 	
 	// Reflection
 	while (reflection > 0.01) {

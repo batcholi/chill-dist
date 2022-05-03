@@ -434,6 +434,20 @@ float Fresnel(const vec3 position, const vec3 normal, const float indexOfRefract
 	}
 }
 
+bool Refract(inout vec3 rayDirection, in vec3 surfaceNormal, in float iOR) {
+	const float vDotN = dot(rayDirection, surfaceNormal);
+	const float niOverNt = vDotN > 0 ? iOR : 1.0 / iOR;
+	vec3 dir = rayDirection;
+	rayDirection = refract(rayDirection, -sign(vDotN) * surfaceNormal, niOverNt);
+	if (dot(rayDirection,rayDirection) > 0) {
+		rayDirection = normalize(rayDirection);
+		return true;
+	} else {
+		rayDirection = normalize(reflect(dir, -sign(vDotN) * surfaceNormal));
+	}
+	return false;
+}
+
 vec3 ApplyToneMapping(in vec3 in_color) {
 	vec3 color = in_color;
 	
@@ -1438,7 +1452,14 @@ float WaterWaves(vec3 pos) {
 		+ Simplex(vec3(pos.xz*vec2(2, 4), float(renderer.timestamp - pos.z*2)))*0.5
 	;
 }
+
+layout(set = 1, binding = SET1_BINDING_TLAS) uniform accelerationStructureEXT tlas;
+
+const float IndexOfRefraction = 1.33;
+
 void main() {
+	bool isFirstRay = (ray.hitDistance == 0);
+	
 	CLOSEST_HIT_BEGIN
 		
 		CLOSEST_HIT_BOX_INTERSECTION_COMPUTE_NORMAL
@@ -1449,35 +1470,94 @@ void main() {
 		uint waterDepth = GetTransparentBlockExtra(thisBlockData);
 		
 		ray.color = vec4(vec3(0.01,0.05,0.07) * renderer.skyLightColor, 0.3);
-		ray.ior = 1.33;
+		ray.ior = IndexOfRefraction;
 		
 		if (gl_HitKindEXT == BOX_INTERSECTION_KIND_INSIDE_FACE) {
 			ray.hitDistance = max(camera.zNear, ray.hitDistance - camera.zNear - EPSILON*20);
 		}
+		
 		if (BOX_FACE != 1 && gl_HitKindEXT == BOX_INTERSECTION_KIND_OUTSIDE_FACE && waterDepth == 0) {
+			
 			// Above water
+			
 			ray.normal = vec3(0,1,0);
 			APPLY_NORMAL_BUMP_NOISE(WaterWaves, ray.worldPosition, ray.normal, 0.005)
 			APPLY_FRESNEL_REFLECTION
 			ray.color.a = mix(ray.color.a, 1.0, clamp(ray.reflection, 0, 1));
+			
+			// See through water
+			if (isFirstRay) {
+				RayPayload waterRay = ray;
+				vec3 rayDirection = gl_WorldRayDirectionEXT;
+				vec3 rayPosition = gl_WorldRayOriginEXT + rayDirection * ray.hitDistance;
+				if (Refract(rayDirection, waterRay.normal, IndexOfRefraction)) {
+					// Launch ray to underwater objects (should exclude water blocks)
+					ray.hitDistance = 0;
+					traceRayEXT(tlas, 0, ~RENDERABLE_WATER, 0/*rayType*/, SBT_HITGROUPS_PER_GEOMETRY/*nbRayTypes*/, 0/*missIndex*/, rayPosition, camera.zNear, rayDirection, MAX_WATER_DEPTH, RAY_PAYLOAD_PRIMARY);
+					float falloff = pow(smoothstep(MAX_WATER_DEPTH, 0, (ray.hitDistance>0? distance(ray.worldPosition, waterRay.worldPosition) : MAX_WATER_DEPTH)), 4);
+					ray.color.rgb = mix(waterRay.color.rgb*waterRay.color.a, ray.color.rgb, falloff);
+					waterRay.color.rgb = mix(ray.color.rgb, waterRay.color.rgb, clamp(waterRay.color.a, 0, 1));
+					waterRay.color.a = 1;
+					ray = waterRay;
+				}
+			}
+			
 		} else {
 			// Underwater
 			ray.underwater = true;
 			if (dot(gl_WorldRayDirectionEXT, vec3(0,1,0)) > 0) {
 				// Looking at surface
 				float hitBlockUnderwaterDepth = ray.localPosition.y - AABB_MAX.y - float(waterDepth);
-				ray.distanceToSurface = clamp(gl_HitTEXT + min(-hitBlockUnderwaterDepth/max(0.001, dot(gl_WorldRayDirectionEXT, vec3(0,1,0))), camera.zFar), camera.zNear, MAX_WATER_DEPTH);
+				float distanceToSurface = clamp(gl_HitTEXT + min(-hitBlockUnderwaterDepth/max(0.001, dot(gl_WorldRayDirectionEXT, vec3(0,1,0))), camera.zFar), camera.zNear, MAX_WATER_DEPTH);
 				ray.normal = vec3(0,-1,0);
-				vec3 wavePosition = gl_WorldRayOriginEXT + gl_WorldRayDirectionEXT * ray.distanceToSurface;
+				vec3 wavePosition = gl_WorldRayOriginEXT + gl_WorldRayDirectionEXT * distanceToSurface;
 				APPLY_NORMAL_BUMP_NOISE(WaterWaves, wavePosition, ray.normal, 0.02)
+				
+				// See through water (underwater looking up, possibly at surface)
+				if (isFirstRay) {
+					RayPayload waterRay = ray;
+					vec3 rayDirection = gl_WorldRayDirectionEXT;
+					vec3 rayPosition = gl_WorldRayOriginEXT;
+					// Launch ray to surface (should exclude water blocks)
+					ray.hitDistance = 0;
+					traceRayEXT(tlas, 0, ~RENDERABLE_WATER, 0/*rayType*/, SBT_HITGROUPS_PER_GEOMETRY/*nbRayTypes*/, 0/*missIndex*/, rayPosition, camera.zNear, rayDirection, distanceToSurface, RAY_PAYLOAD_PRIMARY);
+					float falloff = pow(smoothstep(MAX_WATER_DEPTH, 0, (ray.hitDistance>0? ray.hitDistance : distanceToSurface)), 4);
+					// Surface refraction from underwater
+					if (ray.hitDistance == -1) {
+						rayPosition += rayDirection * distanceToSurface;
+						Refract(rayDirection, waterRay.normal, 1.0 / IndexOfRefraction);
+						// Launch ray from surface to other objects (should exclude water blocks)
+						ray.hitDistance = 0;
+						traceRayEXT(tlas, 0, ~RENDERABLE_WATER, 0/*rayType*/, SBT_HITGROUPS_PER_GEOMETRY/*nbRayTypes*/, 0/*missIndex*/, rayPosition, camera.zNear, rayDirection, camera.zFar, RAY_PAYLOAD_PRIMARY);
+						ray.color.rgb = mix(ray.color.rgb, waterRay.color.rgb, waterRay.color.a);
+					}
+					ray.color.rgb = mix(ray.color.rgb, waterRay.color.rgb, clamp(waterRay.color.a, 0, 1));
+					ray.color.rgb = mix(waterRay.color.rgb*waterRay.color.a, ray.color.rgb, falloff);
+				}
+			
 			} else {
 				// Looking down
-				ray.distanceToSurface = -1;
 				ray.ior = 1;
+				
+				// See through water (underwater looking down)
+				if (isFirstRay) {
+					RayPayload waterRay = ray;
+					vec3 rayDirection = gl_WorldRayDirectionEXT;
+					vec3 rayPosition = gl_WorldRayOriginEXT;
+					// Launch ray to underwater objects (should exclude water blocks)
+					ray.hitDistance = 0;
+					traceRayEXT(tlas, 0, ~RENDERABLE_WATER, 0/*rayType*/, SBT_HITGROUPS_PER_GEOMETRY/*nbRayTypes*/, 0/*missIndex*/, rayPosition, camera.zNear, rayDirection, MAX_WATER_DEPTH, RAY_PAYLOAD_PRIMARY);
+					if (ray.hitDistance == -1) {
+						ray = waterRay;
+						ray.hitDistance = MAX_WATER_DEPTH;
+					}
+					float falloff = pow(smoothstep(MAX_WATER_DEPTH, 0, ray.hitDistance), 4);
+					ray.color.rgb = mix(ray.color.rgb, waterRay.color.rgb, clamp(waterRay.color.a, 0, 1));
+					ray.color.rgb = mix(waterRay.color.rgb*waterRay.color.a, ray.color.rgb, falloff);
+				}
+			
 			}
 		}
-		ray.falloffDistance = MAX_WATER_DEPTH;
-		ray.falloffPow = 4;
 
 	CLOSEST_HIT_END
 }
