@@ -1433,6 +1433,7 @@ void main() {
 						ray.hitDistance = 0;
 						traceRayEXT(tlas, 0, RENDERABLE_PRIMARY_EXCEPT_WATER, 0/*rayType*/, SBT_HITGROUPS_PER_GEOMETRY/*nbRayTypes*/, 0/*missIndex*/, rayPosition, camera.zNear, rayDirection, camera.zFar, RAY_PAYLOAD_PRIMARY);
 						ray.color.rgb = mix(ray.color.rgb, waterRay.color.rgb, waterRay.color.a);
+						ray.hitDistance = -1;
 					}
 					ray.color.rgb = mix(ray.color.rgb, waterRay.color.rgb, clamp(waterRay.color.a, 0, 1));
 					ray.color.rgb = mix(waterRay.color.rgb*waterRay.color.a, ray.color.rgb, falloff);
