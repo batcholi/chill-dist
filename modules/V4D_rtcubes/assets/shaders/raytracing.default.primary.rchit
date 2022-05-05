@@ -205,6 +205,20 @@
 #define MAX_CAMERAS 64
 #define MAX_TEXTURE_BINDINGS 65535
 
+// Renderable types
+
+#define RENDERABLE_SELF (1u<< 0)
+#define RENDERABLE_SOLID (1u<< 1)
+#define RENDERABLE_WATER (1u<< 2)
+#define RENDERABLE_MOB (1u<< 3)
+#define RENDERABLE_CLUTTER (1u<< 4)
+// #define RENDERABLE_ (1u<< 5)
+// #define RENDERABLE_ (1u<< 6)
+// #define RENDERABLE_ (1u<< 7)
+#define RENDERABLE_ALL 0xff
+#define RENDERABLE_PRIMARY (~RENDERABLE_SELF)
+#define RENDERABLE_PRIMARY_EXCEPT_WATER (RENDERABLE_PRIMARY & ~RENDERABLE_WATER)
+
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////
 // Structs and Buffer References -- Must use aligned_* explicit arithmetic types (or VkDeviceAddress as an uint64_t, or BUFFER_REFERENCE_ADDR(StructType))
 
@@ -699,16 +713,6 @@ vec3 RandomInUnitSphere(inout uint seed) {
 
 /////////////////////
 
-#define RENDERABLE_SELF (1u<< 0)
-#define RENDERABLE_SOLID (1u<< 1)
-#define RENDERABLE_WATER (1u<< 2)
-#define RENDERABLE_MOB (1u<< 3)
-#define RENDERABLE_CLUTTER (1u<< 4)
-// #define RENDERABLE_ (1u<< 5)
-// #define RENDERABLE_ (1u<< 6)
-// #define RENDERABLE_ (1u<< 7)
-#define RENDERABLE_ALL 0xff
-
 #define SET1_BINDING_TLAS 0
 #define SET1_BINDING_RENDERER_DATA 1
 
@@ -758,11 +762,9 @@ struct RayPayload {
 	float reflection;
 	uvec2 index;
 	int tlasInstanceIndex;
-	float ior; // Index Of Refraction
 	float totalDistanceFromEye;
-	float t2;
-	// float _unused_1;
-	// float _unused_2;
+	vec3 nextPosition; // For translucency with Refraction
+	// float _unused;
 };
 #ifdef SHADER_RGEN
 	layout(location = RAY_PAYLOAD_PRIMARY) rayPayloadEXT RayPayload ray;
@@ -836,11 +838,11 @@ struct RayPayload {
 	ray.hitDistance = _t;\
 	ray.totalDistanceFromEye += _t;\
 	ray.localPosition = gl_ObjectRayOriginEXT + gl_ObjectRayDirectionEXT * ray.hitDistance;\
+	ray.nextPosition = gl_WorldRayOriginEXT + gl_WorldRayDirectionEXT * ray.hitDistance;\
 	ray.index = uvec2(AIM_GEOMETRY_ID, gl_PrimitiveID);\
 	ray.tlasInstanceIndex = gl_InstanceID;\
 	ray.color = vec4(vec3(0.5), 1.0);\
 	ray.reflection = 0;\
-	ray.ior = 1.45;\
 }
 #define CLOSEST_HIT_BEGIN CLOSEST_HIT_BEGIN_T(gl_HitTEXT)
 #define CLOSEST_HIT_END {\
@@ -851,7 +853,6 @@ struct RayPayload {
 		ray.normal = normalize(mix(-gl_WorldRayDirectionEXT, normalize(cross(-gl_WorldRayDirectionEXT, tmp)), 1.0-bias));\
 	}\
 	ray.normal = DoubleSidedNormals(ray.normal);\
-	ray.t2 = max(ray.t2, ray.hitDistance);\
 }
 
 #define CLOSEST_HIT_BOX_AIM_WIREFRAME {\
@@ -906,60 +907,44 @@ float sdfSphere(vec3 p, float r) {
 	return length(p) - r;
 }
 
-#define APPLY_FRESNEL_REFLECTION {\
-	ray.reflection = Fresnel((camera.viewMatrix * vec4(gl_WorldRayOriginEXT + gl_WorldRayDirectionEXT * ray.hitDistance, 1)).xyz, normalize(WORLD2VIEWNORMAL * ray.normal), ray.ior);\
+#define APPLY_FRESNEL_REFLECTION(IndexOfRefraction) {\
+	ray.reflection = Fresnel((camera.viewMatrix * vec4(gl_WorldRayOriginEXT + gl_WorldRayDirectionEXT * ray.hitDistance, 1)).xyz, normalize(WORLD2VIEWNORMAL * ray.normal), IndexOfRefraction);\
 }
 
 #define APPLY_STANDARD_BLOCK_LIGHTING {\
-	ivec3 facingBlockPos = AABB_CENTER_INT + ivec3(round(ray.normal));\
+	const int nbAdjacentSides = 18;\
+	const ivec3 adjacentSides[nbAdjacentSides] = {\
+		ivec3( 0, 0, 1),\
+		ivec3( 0, 1, 0),\
+		ivec3( 1, 0, 0),\
+		ivec3( 0, 0,-1),\
+		ivec3( 0,-1, 0),\
+		ivec3(-1, 0, 0),\
+		ivec3( 0,-1,-1),\
+		ivec3( 1, 0, 1),\
+		ivec3( 0, 1, 1),\
+		ivec3( 1, 1, 0),\
+		ivec3(-1, 0,-1),\
+		ivec3(-1,-1, 0),\
+		ivec3( 0,-1, 1),\
+		ivec3(-1, 0, 1),\
+		ivec3(-1, 1, 0),\
+		ivec3( 0, 1,-1),\
+		ivec3( 1, 0,-1),\
+		ivec3( 1,-1, 0),\
+	};\
 	uint64_t chunkID = VOXEL.extra;\
-	BlockData facingBlockData = GetBlockData(chunkID, facingBlockPos);\
-	if (!IsBlockValid(facingBlockData)) {\
-		facingBlockData = DefaultAirBlock; /* If invalid, assume a fully-sky-lit air block */\
-	}\
-	if (HasBlockLighting(facingBlockData)) {\
-		const int nbAdjacentSides = 18;\
-		const ivec3 adjacentSides[nbAdjacentSides] = {\
-			ivec3( 0, 0, 1),\
-			ivec3( 0, 1, 0),\
-			ivec3( 1, 0, 0),\
-			ivec3( 0, 0,-1),\
-			ivec3( 0,-1, 0),\
-			ivec3(-1, 0, 0),\
-			ivec3( 0,-1,-1),\
-			ivec3( 1, 0, 1),\
-			ivec3( 0, 1, 1),\
-			ivec3( 1, 1, 0),\
-			ivec3(-1, 0,-1),\
-			ivec3(-1,-1, 0),\
-			ivec3( 0,-1, 1),\
-			ivec3(-1, 0, 1),\
-			ivec3(-1, 1, 0),\
-			ivec3( 0, 1,-1),\
-			ivec3( 1, 0,-1),\
-			ivec3( 1,-1, 0),\
-		};\
-		vec4 lighting = vec4(GetBlockLighting(facingBlockData), 1);\
-		for (int i = 0; i < nbAdjacentSides; ++i) {\
-			if (dot(vec3(adjacentSides[i]), ray.normal) == 0) {\
-				ivec3 adjacentBlockPos = facingBlockPos + adjacentSides[i];\
-				uint64_t adjacentBlockChunkID = chunkID;\
-				BlockData adjacentBlock = GetBlockData(adjacentBlockChunkID, adjacentBlockPos);\
-				if (!IsBlockValid(adjacentBlock)) {\
-					adjacentBlock = DefaultAirBlock;\
-				}\
-				vec3 p = (ray.localPosition - AABB_CENTER) - vec3(adjacentSides[i]);\
-				if (HasBlockLighting(adjacentBlock)) {\
-					lighting += vec4(GetBlockLighting(adjacentBlock) * (1 - clamp(max(sdfCube(p, 0.6), sdfSphere(p, 0.7)), 0, 1)), 1);\
-				} else {\
-					lighting.a++;\
-				}\
-			}\
+	ivec3 facingBlockPos = AABB_CENTER_INT + ivec3(round(ray.normal));\
+	vec4 lighting = vec4(GetBlockLighting(chunkID, facingBlockPos), 1);\
+	for (int i = 0; i < nbAdjacentSides; ++i) {\
+		if (dot(vec3(adjacentSides[i]), ray.normal) == 0) {\
+			ivec3 adjacentBlockPos = facingBlockPos + adjacentSides[i];\
+			uint64_t adjacentBlockChunkID = chunkID;\
+			vec3 p = (ray.localPosition - AABB_CENTER) - vec3(adjacentSides[i]);\
+			lighting += vec4(GetBlockLighting(adjacentBlockChunkID, adjacentBlockPos) * (1 - clamp(sdfSphere(p, 0.667), 0, 1)), 1);\
 		}\
-		ray.color.rgb *= clamp(lighting.rgb/lighting.a, 0, 1);\
-	} else {\
-		ray.color.rgb = vec3(0);\
 	}\
+	ray.color.rgb *= clamp(lighting.rgb/lighting.a, 0, 1);\
 }
 
 #endif // _RTCUBES_SHADER_BASE_INCLUDED_
@@ -1147,10 +1132,9 @@ float sdfSphere(vec3 p, float r) {
 			uint32_t _ : 15; // padding
 			Position(uint32_t x, uint32_t y, uint32_t z) : x(x), z(z), y(y), _(0) {}
 		} pos;
-		explicit BlockIndex(uint32_t index32) : index32(index32) {
+		explicit BlockIndex(uint32_t index32 = 0) : index32(index32) {
 			assert(index32 < MAX_BLOCKS_PER_CHUNK);
 		}
-		BlockIndex(uint16_t index16, bool extension) : index32(uint32_t(index16) | (uint32_t(extension?1:0) << 16)) {}
 		BlockIndex(const glm::ivec3& p) : pos(p.x, p.y, p.z) {
 			assert(p.x >= 0);
 			assert(p.z >= 0);
@@ -1166,15 +1150,9 @@ float sdfSphere(vec3 p, float r) {
 		glm::ivec3 Position() const {
 			return {pos.x,pos.y,pos.z};
 		}
-		uint16_t Index16() const {
-			return index32 & 0xffff;
-		}
-		uint32_t Index32() const {
+		operator uint32_t() const {
 			assert(index32 < MAX_BLOCKS_PER_CHUNK);
 			return index32;
-		}
-		bool IndexExtension() const {
-			return index32 & 0x10000;
 		}
 	};
 #else
@@ -1184,78 +1162,26 @@ STATIC_ASSERT_SIZE(BlockIndex, 4);
 
 // Used in ClientChunkData for GPU calculation of lighting as well as Block-Specific stuff
 #ifdef __cplusplus
-	union BlockData {
-		struct {
-			// Only for opaque non-emissive blocks (dirt, wall, stone, trunc, ...)
-			uint16_t extra : 14; // extra Block-Specific data (custom structure per block type)
-			uint16_t lighting : 1; // will be False
-			uint16_t flag : 1; // Multi-purpose flag (see note below)
-		} opaqueBlock;
-		struct {
-			// Only for transparent or emissive blocks (air, glass, water, torch, lava, window, leafs, ...)
-			uint16_t extra : 6; // extra Block-Specific data (custom structure per block type)
-			uint16_t light_torch : 4; // 0:15 level of light by torches
-			uint16_t light_sky : 4; // 0:15 level of light by sky
-			uint16_t lighting : 1; // will be True
-			uint16_t flag : 1; // Multi-purpose flag (see note below)
-		};
-		/*
-			The flag bit has three purposes depending on which stage/struct it's used in.
-				* TerrainBlock: For Server-Side when propagating information like lighting
-					flag is set to 1 to mark it for propagation, then 0 when finished. After the propagation step, all blocks should have this set to 0.
-				* VisibleBlock: For transferring chunk data to GPU (and generate AABBs)
-					flag is used as the 17th bit for the block index to permit chunks of 512 blocks in Y. It's then set to 1 for the next step when writing it to ClientChunkData.
-				* ClientChunkData: For the GPU to consume during rendering
-					flag set to 1 means its information is valid, thus a value of zero would mean we don't know what this block contains (yet) and we cannot rely on this data.
-		*/
-		// uint16_t _rawData;
-		// BlockData() : _rawData(0) {}
-		// bool operator==(const BlockData& other) const {
-		// 	if (other.lighting != lighting) return false;
-		// 	return lighting? extra == other.extra : opaqueBlock.extra == other.opaqueBlock.extra;
-		// }
-		// bool operator!=(const BlockData& other) const {
-		// 	return !(*this==other);
-		// }
+	typedef uint8_t BlockData;// extra Block-Specific data (custom structure per block type)
+	struct BlockLighting {
+		uint8_t light_torch : 4; // 0:15 level of light by torches
+		uint8_t light_sky : 4; // 0:15 level of light by sky (Flipped bits so that zero means fully lit)
 	};
 #else
-	#define BlockData uint16_t
-	#define GetOpaqueBlockExtra(blockData)		(blockData & 0x3fff)
-	#define GetTransparentBlockExtra(blockData)	(blockData & 0x003f)
-	#define GetBlockLightTorch(blockData)		((blockData >> 6) & 0xf)
-	#define GetBlockLightSky(blockData)		((blockData >> 10) & 0xf)
-	#define HasBlockLighting(blockData)		((blockData & 0x4000) != 0)
-	#define IsBlockValid(blockData)			((blockData & 0x8000) != 0)
-	#define GetBlockLighting(blockData) (min(vec3(1), renderer.skyLightColor * pow(float(GetBlockLightSky(blockData)) / MAX_SKY_LIGHT_LEVEL, 4.0) + renderer.torchLightColor * pow(float(GetBlockLightTorch(blockData)) / 15, 4.0)))
-	#define DefaultAirBlock (uint16_t(0xc000) | uint16_t(MAX_SKY_LIGHT_LEVEL << 10))
+	#define BlockData uint8_t
+	#define BlockLighting uint8_t
 #endif
-STATIC_ASSERT_SIZE(BlockData, 2);
+STATIC_ASSERT_SIZE(BlockLighting, 1);
 
 #ifdef __cplusplus
-	struct VisibleBlock {
-		uint16_t index16; // Stores the first 16 bits of the block Index32, and stores the 17th bit in data.flag
-		BlockData data;
-		explicit VisibleBlock(BlockIndex index, BlockData data) : index16(index.Index16()), data(data) {
-			this->data.flag = index.IndexExtension();
-		}
-		explicit VisibleBlock(uint32_t index, BlockData data) : VisibleBlock(BlockIndex(index), data) {}
-		operator BlockIndex() const {
-			return BlockIndex(index16, data.flag);
-		}
-	};
-	STATIC_ASSERT_SIZE(VisibleBlock, 4);
-
 	// For chunk storage on disk and server-side processing
 	struct TerrainBlock {
 		union {
 			uint32_t _rawData;
 			struct {
-				uint16_t type : 12;// maximum of 4096 different types of blocks, total, including all mods
-				uint16_t opaque : 1; // bool (cannot see through and doesn't let light pass)
-				uint16_t solid : 1; // bool (has collider)
-				uint16_t dynamic : 1; // bool (has custom logic that must be executed at every tick)
-				uint16_t emissive : 1; // bool (can emit light)
+				uint16_t type;// maximum of 65k different types of blocks, total, including all mods
 				BlockData data;
+				BlockLighting lighting;
 			};
 		};
 		TerrainBlock() : _rawData(0) {}
@@ -1287,14 +1213,14 @@ BUFFER_REFERENCE_STRUCT_READONLY(16) ClientChunkData {
 	aligned_VkDeviceAddress plusZ;
 	aligned_VkDeviceAddress minusZ;
 	// blocks
-	BlockData blocks[MAX_BLOCKS_PER_CHUNK];
-	aligned_uint16_t blockTypes[MAX_BLOCKS_PER_CHUNK];
+	BlockData blockData[MAX_BLOCKS_PER_CHUNK];
+	BlockLighting blockLighting[MAX_BLOCKS_PER_CHUNK];
 };
-STATIC_ASSERT_ALIGNED16_SIZE(ClientChunkData, 32 + 4*MAX_BLOCKS_PER_CHUNK);
+STATIC_ASSERT_ALIGNED16_SIZE(ClientChunkData, 32 + 2*MAX_BLOCKS_PER_CHUNK);
 
 #ifndef __cplusplus
 	//
-	BlockData GetBlockData(inout uint64_t chunkID, inout ivec3 pos) {
+	bool GetBlock(inout uint64_t chunkID, inout ivec3 pos) {
 		ClientChunkData chunk = ClientChunkData(chunkID); // Because of a bug in AMD drivers, we cannot pass the buffer_reference as an argument to a function, instead we pass its address
 		while (pos.x < 0 && chunk.minusX != 0) {
 			chunk = ClientChunkData(chunk.minusX);
@@ -1313,8 +1239,11 @@ STATIC_ASSERT_ALIGNED16_SIZE(ClientChunkData, 32 + 4*MAX_BLOCKS_PER_CHUNK);
 			pos.z -= MAX_BLOCK_Z;
 		}
 		chunkID = uint64_t(chunk); // Because of the AMD bug mentioned above...
-		if (pos.x >= 0 && pos.y >= 0 && pos.z >= 0 && pos.x < MAX_BLOCK_X && pos.y < MAX_BLOCK_Y && pos.z < MAX_BLOCK_Z) {
-			return chunk.blocks[BlockIndex(pos.x, pos.y, pos.z)];
+		return pos.x >= 0 && pos.y >= 0 && pos.z >= 0 && pos.x < MAX_BLOCK_X && pos.y < MAX_BLOCK_Y && pos.z < MAX_BLOCK_Z;
+	}
+	BlockData GetBlockData(inout uint64_t chunkID, inout ivec3 pos) {
+		if (GetBlock(chunkID, pos)) {
+			return ClientChunkData(chunkID).blockData[BlockIndex(pos.x, pos.y, pos.z)];
 		}
 		return BlockData(0); // invalid
 	}
@@ -1322,34 +1251,20 @@ STATIC_ASSERT_ALIGNED16_SIZE(ClientChunkData, 32 + 4*MAX_BLOCKS_PER_CHUNK);
 		BlockData GetBlockData() {
 			ivec3 pos = AABB_CENTER_INT;
 			if (pos.x >= 0 && pos.y >= 0 && pos.z >= 0 && pos.x < MAX_BLOCK_X && pos.y < MAX_BLOCK_Y && pos.z < MAX_BLOCK_Z) {
-				return ClientChunkData(VOXEL.extra).blocks[BlockIndex(pos.x, pos.y, pos.z)];
+				return ClientChunkData(VOXEL.extra).blockData[BlockIndex(pos.x, pos.y, pos.z)];
 			}
 			return BlockData(0); // invalid
 		}
 	#endif
-	uint16_t GetBlockType(inout uint64_t chunkID, inout ivec3 pos) {
-		ClientChunkData chunk = ClientChunkData(chunkID); // Because of a bug in AMD drivers, we cannot pass the buffer_reference as an argument to a function, instead we pass its address
-		while (pos.x < 0 && chunk.minusX != 0) {
-			chunk = ClientChunkData(chunk.minusX);
-			pos.x += MAX_BLOCK_X;
+	vec3 GetBlockLighting(inout uint64_t chunkID, inout ivec3 pos) {
+		int skyLevel = MAX_SKY_LIGHT_LEVEL;
+		int torchLevel = 0;
+		if (GetBlock(chunkID, pos)) {
+			BlockLighting lighting = ClientChunkData(chunkID).blockLighting[BlockIndex(pos.x, pos.y, pos.z)];
+			skyLevel = (~(lighting >> 4)) & 0xf; // Flipped
+			torchLevel = lighting & 0xf;
 		}
-		while (pos.z < 0 && chunk.minusZ != 0) {
-			chunk = ClientChunkData(chunk.minusZ);
-			pos.z += MAX_BLOCK_Z;
-		}
-		while (pos.x >= MAX_BLOCK_X && chunk.plusX != 0) {
-			chunk = ClientChunkData(chunk.plusX);
-			pos.x -= MAX_BLOCK_X;
-		}
-		while (pos.z >= MAX_BLOCK_Z && chunk.plusZ != 0) {
-			chunk = ClientChunkData(chunk.plusZ);
-			pos.z -= MAX_BLOCK_Z;
-		}
-		chunkID = uint64_t(chunk); // Because of the AMD bug mentioned above...
-		if (pos.x >= 0 && pos.y >= 0 && pos.z >= 0 && pos.x < MAX_BLOCK_X && pos.y < MAX_BLOCK_Y && pos.z < MAX_BLOCK_Z) {
-			return chunk.blockTypes[BlockIndex(pos.x, pos.y, pos.z)];
-		}
-		return uint16_t(0); // invalid
+		return min(vec3(1), renderer.skyLightColor * pow(float(skyLevel) / MAX_SKY_LIGHT_LEVEL, 4.0) + renderer.torchLightColor * pow(float(torchLevel) / 15, 4.0));
 	}
 #endif
 
@@ -1357,8 +1272,7 @@ STATIC_ASSERT_ALIGNED16_SIZE(ClientChunkData, 32 + 4*MAX_BLOCKS_PER_CHUNK);
 void main() {
 	CLOSEST_HIT_BEGIN
 		CLOSEST_HIT_BOX_INTERSECTION_COMPUTE_NORMAL
-		APPLY_FRESNEL_REFLECTION // or ray.reflection = ...
-		// ray.ior = 1.45;
+		APPLY_FRESNEL_REFLECTION(1.45) // or ray.reflection = ...
 		// ray.color = vec4(vec3(0.5), 1);
 		//TODO: APPLY_NORMAL_MAP(textureIndex)
 	CLOSEST_HIT_END

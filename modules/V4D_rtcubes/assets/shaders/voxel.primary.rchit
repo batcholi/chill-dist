@@ -205,6 +205,20 @@
 #define MAX_CAMERAS 64
 #define MAX_TEXTURE_BINDINGS 65535
 
+// Renderable types
+
+#define RENDERABLE_SELF (1u<< 0)
+#define RENDERABLE_SOLID (1u<< 1)
+#define RENDERABLE_WATER (1u<< 2)
+#define RENDERABLE_MOB (1u<< 3)
+#define RENDERABLE_CLUTTER (1u<< 4)
+// #define RENDERABLE_ (1u<< 5)
+// #define RENDERABLE_ (1u<< 6)
+// #define RENDERABLE_ (1u<< 7)
+#define RENDERABLE_ALL 0xff
+#define RENDERABLE_PRIMARY (~RENDERABLE_SELF)
+#define RENDERABLE_PRIMARY_EXCEPT_WATER (RENDERABLE_PRIMARY & ~RENDERABLE_WATER)
+
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////
 // Structs and Buffer References -- Must use aligned_* explicit arithmetic types (or VkDeviceAddress as an uint64_t, or BUFFER_REFERENCE_ADDR(StructType))
 
@@ -699,16 +713,6 @@ vec3 RandomInUnitSphere(inout uint seed) {
 
 /////////////////////
 
-#define RENDERABLE_SELF (1u<< 0)
-#define RENDERABLE_SOLID (1u<< 1)
-#define RENDERABLE_WATER (1u<< 2)
-#define RENDERABLE_MOB (1u<< 3)
-#define RENDERABLE_CLUTTER (1u<< 4)
-// #define RENDERABLE_ (1u<< 5)
-// #define RENDERABLE_ (1u<< 6)
-// #define RENDERABLE_ (1u<< 7)
-#define RENDERABLE_ALL 0xff
-
 #define SET1_BINDING_TLAS 0
 #define SET1_BINDING_RENDERER_DATA 1
 
@@ -758,11 +762,9 @@ struct RayPayload {
 	float reflection;
 	uvec2 index;
 	int tlasInstanceIndex;
-	float ior; // Index Of Refraction
 	float totalDistanceFromEye;
-	float t2;
-	// float _unused_1;
-	// float _unused_2;
+	vec3 nextPosition; // For translucency with Refraction
+	// float _unused;
 };
 #ifdef SHADER_RGEN
 	layout(location = RAY_PAYLOAD_PRIMARY) rayPayloadEXT RayPayload ray;
@@ -836,11 +838,11 @@ struct RayPayload {
 	ray.hitDistance = _t;\
 	ray.totalDistanceFromEye += _t;\
 	ray.localPosition = gl_ObjectRayOriginEXT + gl_ObjectRayDirectionEXT * ray.hitDistance;\
+	ray.nextPosition = gl_WorldRayOriginEXT + gl_WorldRayDirectionEXT * ray.hitDistance;\
 	ray.index = uvec2(AIM_GEOMETRY_ID, gl_PrimitiveID);\
 	ray.tlasInstanceIndex = gl_InstanceID;\
 	ray.color = vec4(vec3(0.5), 1.0);\
 	ray.reflection = 0;\
-	ray.ior = 1.45;\
 }
 #define CLOSEST_HIT_BEGIN CLOSEST_HIT_BEGIN_T(gl_HitTEXT)
 #define CLOSEST_HIT_END {\
@@ -851,7 +853,6 @@ struct RayPayload {
 		ray.normal = normalize(mix(-gl_WorldRayDirectionEXT, normalize(cross(-gl_WorldRayDirectionEXT, tmp)), 1.0-bias));\
 	}\
 	ray.normal = DoubleSidedNormals(ray.normal);\
-	ray.t2 = max(ray.t2, ray.hitDistance);\
 }
 
 #define CLOSEST_HIT_BOX_AIM_WIREFRAME {\
@@ -906,60 +907,44 @@ float sdfSphere(vec3 p, float r) {
 	return length(p) - r;
 }
 
-#define APPLY_FRESNEL_REFLECTION {\
-	ray.reflection = Fresnel((camera.viewMatrix * vec4(gl_WorldRayOriginEXT + gl_WorldRayDirectionEXT * ray.hitDistance, 1)).xyz, normalize(WORLD2VIEWNORMAL * ray.normal), ray.ior);\
+#define APPLY_FRESNEL_REFLECTION(IndexOfRefraction) {\
+	ray.reflection = Fresnel((camera.viewMatrix * vec4(gl_WorldRayOriginEXT + gl_WorldRayDirectionEXT * ray.hitDistance, 1)).xyz, normalize(WORLD2VIEWNORMAL * ray.normal), IndexOfRefraction);\
 }
 
 #define APPLY_STANDARD_BLOCK_LIGHTING {\
-	ivec3 facingBlockPos = AABB_CENTER_INT + ivec3(round(ray.normal));\
+	const int nbAdjacentSides = 18;\
+	const ivec3 adjacentSides[nbAdjacentSides] = {\
+		ivec3( 0, 0, 1),\
+		ivec3( 0, 1, 0),\
+		ivec3( 1, 0, 0),\
+		ivec3( 0, 0,-1),\
+		ivec3( 0,-1, 0),\
+		ivec3(-1, 0, 0),\
+		ivec3( 0,-1,-1),\
+		ivec3( 1, 0, 1),\
+		ivec3( 0, 1, 1),\
+		ivec3( 1, 1, 0),\
+		ivec3(-1, 0,-1),\
+		ivec3(-1,-1, 0),\
+		ivec3( 0,-1, 1),\
+		ivec3(-1, 0, 1),\
+		ivec3(-1, 1, 0),\
+		ivec3( 0, 1,-1),\
+		ivec3( 1, 0,-1),\
+		ivec3( 1,-1, 0),\
+	};\
 	uint64_t chunkID = VOXEL.extra;\
-	BlockData facingBlockData = GetBlockData(chunkID, facingBlockPos);\
-	if (!IsBlockValid(facingBlockData)) {\
-		facingBlockData = DefaultAirBlock; /* If invalid, assume a fully-sky-lit air block */\
-	}\
-	if (HasBlockLighting(facingBlockData)) {\
-		const int nbAdjacentSides = 18;\
-		const ivec3 adjacentSides[nbAdjacentSides] = {\
-			ivec3( 0, 0, 1),\
-			ivec3( 0, 1, 0),\
-			ivec3( 1, 0, 0),\
-			ivec3( 0, 0,-1),\
-			ivec3( 0,-1, 0),\
-			ivec3(-1, 0, 0),\
-			ivec3( 0,-1,-1),\
-			ivec3( 1, 0, 1),\
-			ivec3( 0, 1, 1),\
-			ivec3( 1, 1, 0),\
-			ivec3(-1, 0,-1),\
-			ivec3(-1,-1, 0),\
-			ivec3( 0,-1, 1),\
-			ivec3(-1, 0, 1),\
-			ivec3(-1, 1, 0),\
-			ivec3( 0, 1,-1),\
-			ivec3( 1, 0,-1),\
-			ivec3( 1,-1, 0),\
-		};\
-		vec4 lighting = vec4(GetBlockLighting(facingBlockData), 1);\
-		for (int i = 0; i < nbAdjacentSides; ++i) {\
-			if (dot(vec3(adjacentSides[i]), ray.normal) == 0) {\
-				ivec3 adjacentBlockPos = facingBlockPos + adjacentSides[i];\
-				uint64_t adjacentBlockChunkID = chunkID;\
-				BlockData adjacentBlock = GetBlockData(adjacentBlockChunkID, adjacentBlockPos);\
-				if (!IsBlockValid(adjacentBlock)) {\
-					adjacentBlock = DefaultAirBlock;\
-				}\
-				vec3 p = (ray.localPosition - AABB_CENTER) - vec3(adjacentSides[i]);\
-				if (HasBlockLighting(adjacentBlock)) {\
-					lighting += vec4(GetBlockLighting(adjacentBlock) * (1 - clamp(max(sdfCube(p, 0.6), sdfSphere(p, 0.7)), 0, 1)), 1);\
-				} else {\
-					lighting.a++;\
-				}\
-			}\
+	ivec3 facingBlockPos = AABB_CENTER_INT + ivec3(round(ray.normal));\
+	vec4 lighting = vec4(GetBlockLighting(chunkID, facingBlockPos), 1);\
+	for (int i = 0; i < nbAdjacentSides; ++i) {\
+		if (dot(vec3(adjacentSides[i]), ray.normal) == 0) {\
+			ivec3 adjacentBlockPos = facingBlockPos + adjacentSides[i];\
+			uint64_t adjacentBlockChunkID = chunkID;\
+			vec3 p = (ray.localPosition - AABB_CENTER) - vec3(adjacentSides[i]);\
+			lighting += vec4(GetBlockLighting(adjacentBlockChunkID, adjacentBlockPos) * (1 - clamp(sdfSphere(p, 0.667), 0, 1)), 1);\
 		}\
-		ray.color.rgb *= clamp(lighting.rgb/lighting.a, 0, 1);\
-	} else {\
-		ray.color.rgb = vec3(0);\
 	}\
+	ray.color.rgb *= clamp(lighting.rgb/lighting.a, 0, 1);\
 }
 
 #endif // _RTCUBES_SHADER_BASE_INCLUDED_

@@ -201,6 +201,20 @@
 #define MAX_CAMERAS 64
 #define MAX_TEXTURE_BINDINGS 65535
 
+// Renderable types
+
+#define RENDERABLE_SELF (1u<< 0)
+#define RENDERABLE_SOLID (1u<< 1)
+#define RENDERABLE_WATER (1u<< 2)
+#define RENDERABLE_MOB (1u<< 3)
+#define RENDERABLE_CLUTTER (1u<< 4)
+// #define RENDERABLE_ (1u<< 5)
+// #define RENDERABLE_ (1u<< 6)
+// #define RENDERABLE_ (1u<< 7)
+#define RENDERABLE_ALL 0xff
+#define RENDERABLE_PRIMARY (~RENDERABLE_SELF)
+#define RENDERABLE_PRIMARY_EXCEPT_WATER (RENDERABLE_PRIMARY & ~RENDERABLE_WATER)
+
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////
 // Structs and Buffer References -- Must use aligned_* explicit arithmetic types (or VkDeviceAddress as an uint64_t, or BUFFER_REFERENCE_ADDR(StructType))
 
