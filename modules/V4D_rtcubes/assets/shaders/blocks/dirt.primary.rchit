@@ -1297,21 +1297,4 @@ void main() {
 	CLOSEST_HIT_END
 	CLOSEST_HIT_BOX_AIM_WIREFRAME
 	
-	// // Transparent
-	// vec3 rayDirection = gl_WorldRayDirectionEXT;
-	// if (Refract(rayDirection, normalize(ray.normal), 3.0)) {
-		
-	// 	const vec3  _invDir = 1.0 / (mat3(gl_WorldToObjectEXT) * normalize(rayDirection));
-	// 	const vec3  _tbot   = _invDir * (AABB_MIN - ray.localPosition);
-	// 	const vec3  _ttop   = _invDir * (AABB_MAX - ray.localPosition);
-	// 	const vec3  _tmax   = max(_ttop, _tbot);
-	// 	const float t2      = min(_tmax.x, min(_tmax.y, _tmax.z));
-		
-	// 	ray.nextPosition += rayDirection * t2;
-	// 	ray.color.a = 0.5;
-	// } else {
-	// 	ray.color.a = 1;
-	// }
-	
-	
 }
