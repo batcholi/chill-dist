@@ -1110,6 +1110,7 @@ float sdfSphere(vec3 p, float r) {
 #define MAX_SKY_LIGHT_LEVEL 15
 #define MAX_TORCH_LIGHT_LEVEL 15
 #define MAX_WATER_DEPTH 63
+#define WATER_LEVELS 16
 
 // #define FACE_PLUS_X 0x01
 // #define FACE_MINUS_X 0x02
@@ -1154,6 +1155,10 @@ float sdfSphere(vec3 p, float r) {
 			assert(index32 < MAX_BLOCKS_PER_CHUNK);
 			return index32;
 		}
+		BlockIndex operator + (const glm::ivec3& offset) const {
+			glm::ivec3 p = (*this) + offset;
+			return BlockIndex{p};
+		}
 	};
 #else
 	#define BlockIndex(x,y,z) (uint32_t(x) | (uint32_t(z) << 4) | (uint32_t(y) << 8))
@@ -1187,7 +1192,7 @@ STATIC_ASSERT_SIZE(BlockLighting, 1);
 		TerrainBlock() : _rawData(0) {}
 		TerrainBlock(uint16_t type) : type(type) {}
 		bool operator==(const TerrainBlock& other) const {
-			return other.type == type;
+			return other.type == type && other.data == data;
 		}
 		bool operator!=(const TerrainBlock& other) const {
 			return !(*this==other);
