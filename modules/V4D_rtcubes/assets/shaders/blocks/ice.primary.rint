@@ -1107,7 +1107,7 @@ float sdfSphere(vec3 p, float r) {
 #define MAX_BLOCK_Z MAX_BLOCK_XZ
 #define MAX_BLOCKS_PER_CHUNK (MAX_BLOCK_X*MAX_BLOCK_Y*MAX_BLOCK_Z)
 
-// #define REALISTIC_WATER
+#define REALISTIC_WATER
 
 #define MAX_SKY_LIGHT_LEVEL 15
 #define MAX_TORCH_LIGHT_LEVEL 15
