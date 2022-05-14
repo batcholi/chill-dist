@@ -1409,7 +1409,7 @@ void main() {
 			if (Refract(rayDirection, waterRay.normal, IndexOfRefraction)) {
 				// Launch ray to underwater objects (should exclude water blocks)
 				ray.hitDistance = 0;
-				traceRayEXT(tlas, 0, RENDERABLE_PRIMARY_EXCEPT_WATER, 0/*rayType*/, SBT_HITGROUPS_PER_GEOMETRY/*nbRayTypes*/, 0/*missIndex*/, worldPosition, camera.zNear, rayDirection, MAX_WATER_DEPTH, RAY_PAYLOAD_PRIMARY);
+				traceRayEXT(tlas, 0, RENDERABLE_PRIMARY_EXCEPT_WATER & ~RENDERABLE_MASK_TRANSPARENT, 0/*rayType*/, SBT_HITGROUPS_PER_GEOMETRY/*nbRayTypes*/, 0/*missIndex*/, worldPosition, camera.zNear, rayDirection, MAX_WATER_DEPTH, RAY_PAYLOAD_PRIMARY);
 				float falloff = pow(smoothstep(MAX_WATER_DEPTH, 0, (ray.hitDistance>0? ray.hitDistance : MAX_WATER_DEPTH)), 4);
 				ray.color.rgb = mix(waterRay.color.rgb*waterRay.color.a, ray.color.rgb, falloff);
 				waterRay.color.rgb = mix(ray.color.rgb, waterRay.color.rgb, clamp(waterRay.color.a, 0, 1));
