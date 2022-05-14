@@ -207,17 +207,27 @@
 
 // Renderable types
 
-#define RENDERABLE_SELF (1u<< 0)
-#define RENDERABLE_SOLID (1u<< 1)
-#define RENDERABLE_WATER (1u<< 2)
-#define RENDERABLE_MOB (1u<< 3)
-#define RENDERABLE_CLUTTER (1u<< 4)
-// #define RENDERABLE_ (1u<< 5)
-// #define RENDERABLE_ (1u<< 6)
-// #define RENDERABLE_ (1u<< 7)
+#define NB_RENDERABLE_TYPES 8
+#define RENDERABLE_TYPE_OPAQUE 0
+#define RENDERABLE_TYPE_TRANSPARENT 1
+#define RENDERABLE_TYPE_SELF 2
+#define RENDERABLE_TYPE_TERRAIN 3
+#define RENDERABLE_TYPE_WATER 4
+#define RENDERABLE_TYPE_MOB 5
+// #define RENDERABLE_TYPE_CLUTTER 6
+// #define RENDERABLE_TYPE_ 7
+
+#define RENDERABLE_MASK_OPAQUE (1u<< RENDERABLE_TYPE_OPAQUE)
+#define RENDERABLE_MASK_TRANSPARENT (1u<< RENDERABLE_TYPE_TRANSPARENT)
+#define RENDERABLE_MASK_SELF (1u<< RENDERABLE_TYPE_SELF)
+#define RENDERABLE_MASK_TERRAIN (1u<< RENDERABLE_TYPE_TERRAIN)
+#define RENDERABLE_MASK_WATER (1u<< RENDERABLE_TYPE_WATER)
+#define RENDERABLE_MASK_MOB (1u<< RENDERABLE_TYPE_MOB)
+// #define RENDERABLE_MASK_CLUTTER (1u<< RENDERABLE_TYPE_CLUTTER)
+// #define RENDERABLE_MASK_ (1u<< RENDERABLE_TYPE_)
 #define RENDERABLE_ALL 0xff
-#define RENDERABLE_PRIMARY (~RENDERABLE_SELF)
-#define RENDERABLE_PRIMARY_EXCEPT_WATER (RENDERABLE_PRIMARY & ~RENDERABLE_WATER)
+#define RENDERABLE_PRIMARY (~RENDERABLE_MASK_SELF)
+#define RENDERABLE_PRIMARY_EXCEPT_WATER (RENDERABLE_PRIMARY & ~RENDERABLE_MASK_WATER)
 
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////
 // Structs and Buffer References -- Must use aligned_* explicit arithmetic types (or VkDeviceAddress as an uint64_t, or BUFFER_REFERENCE_ADDR(StructType))
@@ -1180,7 +1190,7 @@ STATIC_ASSERT_SIZE(BlockLighting, 1);
 
 #ifdef __cplusplus
 	// For chunk storage on disk and server-side processing
-	struct TerrainBlock {
+	struct VoxelBlock {
 		union {
 			uint32_t _rawData;
 			struct {
@@ -1189,23 +1199,23 @@ STATIC_ASSERT_SIZE(BlockLighting, 1);
 				BlockLighting lighting;
 			};
 		};
-		TerrainBlock() : _rawData(0) {}
-		TerrainBlock(uint16_t type) : type(type) {}
-		bool operator==(const TerrainBlock& other) const {
+		VoxelBlock() : _rawData(0) {}
+		VoxelBlock(uint16_t type) : type(type) {}
+		bool operator==(const VoxelBlock& other) const {
 			return other.type == type && other.data == data;
 		}
-		bool operator!=(const TerrainBlock& other) const {
+		bool operator!=(const VoxelBlock& other) const {
 			return !(*this==other);
 		}
 		operator uint32_t() const {return _rawData;}
 	};
-	STATIC_ASSERT_SIZE(TerrainBlock, 4);
+	STATIC_ASSERT_SIZE(VoxelBlock, 4);
 	
 	struct NetworkBlock {
 		int64_t chunkID;
 		BlockIndex index;
-		TerrainBlock block;
-		NetworkBlock(int64_t chunkID, BlockIndex index, TerrainBlock block) : chunkID(chunkID), index(index), block(block) {}
+		VoxelBlock block;
+		NetworkBlock(int64_t chunkID, BlockIndex index, VoxelBlock block) : chunkID(chunkID), index(index), block(block) {}
 	};
 	STATIC_ASSERT_SIZE(NetworkBlock, 16);
 #endif
@@ -1273,6 +1283,7 @@ STATIC_ASSERT_ALIGNED16_SIZE(ClientChunkData, 32 + 2*MAX_BLOCKS_PER_CHUNK);
 	}
 #endif
 
+// #shader primary.rint.0 ../raytracing.default.primary.rint
 
 vec4 _permute(vec4 x){return mod(((x*34.0)+1.0)*x, 289.0);} // used for Simplex
 dvec4 _permute(dvec4 x){return mod(((x*34.0)+1.0)*x, 289.0);} // used for Simplex
@@ -1385,7 +1396,7 @@ void main() {
 	
 		// Above water
 		
-		ray.normal = vec3(0,1,0);
+		// ray.normal = vec3(0,1,0);
 		vec3 worldPosition = gl_WorldRayOriginEXT + gl_WorldRayDirectionEXT * ray.hitDistance;
 		APPLY_NORMAL_BUMP_NOISE(WaterWaves, worldPosition, ray.normal, 0.005)
 		APPLY_FRESNEL_REFLECTION(IndexOfRefraction)
