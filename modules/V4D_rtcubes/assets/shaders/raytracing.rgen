@@ -1135,7 +1135,7 @@ float sdfSphere(vec3 p, float r) {
 
 #ifdef __cplusplus
 	union BlockIndex {
-		uint32_t index32;
+		uint32_t index;
 		struct Position {
 			uint32_t x : 4; // 16
 			uint32_t z : 4; // 16
@@ -1143,8 +1143,8 @@ float sdfSphere(vec3 p, float r) {
 			uint32_t _ : 15; // padding
 			Position(uint32_t x, uint32_t y, uint32_t z) : x(x), z(z), y(y), _(0) {}
 		} pos;
-		explicit BlockIndex(uint32_t index32 = 0) : index32(index32) {
-			assert(index32 < MAX_BLOCKS_PER_CHUNK);
+		BlockIndex(uint32_t index = 0) : index(index) {
+			assert(index < MAX_BLOCKS_PER_CHUNK);
 		}
 		BlockIndex(const glm::ivec3& p) : pos(p.x, p.y, p.z) {
 			assert(p.x >= 0);
@@ -1153,7 +1153,7 @@ float sdfSphere(vec3 p, float r) {
 			assert(p.x < MAX_BLOCK_X);
 			assert(p.z < MAX_BLOCK_Z);
 			assert(p.y < MAX_BLOCK_Y);
-			assert(index32 < MAX_BLOCKS_PER_CHUNK);
+			assert(index < MAX_BLOCKS_PER_CHUNK);
 		}
 		operator glm::ivec3() const {
 			return {pos.x,pos.y,pos.z};
@@ -1162,8 +1162,8 @@ float sdfSphere(vec3 p, float r) {
 			return {pos.x,pos.y,pos.z};
 		}
 		operator uint32_t() const {
-			assert(index32 < MAX_BLOCKS_PER_CHUNK);
-			return index32;
+			assert(index < MAX_BLOCKS_PER_CHUNK);
+			return index;
 		}
 		BlockIndex operator + (const glm::ivec3& offset) const {
 			glm::ivec3 p = (*this) + offset;
@@ -1200,7 +1200,10 @@ STATIC_ASSERT_SIZE(BlockLighting, 1);
 			};
 		};
 		VoxelBlock() : _rawData(0) {}
-		VoxelBlock(uint16_t type) : type(type) {}
+		VoxelBlock(uint16_t type) : type(type), data(0) {
+			lighting.light_torch = 0;
+			lighting.light_sky = 0;
+		}
 		bool operator==(const VoxelBlock& other) const {
 			return other.type == type && other.data == data;
 		}
@@ -1218,6 +1221,13 @@ STATIC_ASSERT_SIZE(BlockLighting, 1);
 		NetworkBlock(int64_t chunkID, BlockIndex index, VoxelBlock block) : chunkID(chunkID), index(index), block(block) {}
 	};
 	STATIC_ASSERT_SIZE(NetworkBlock, 16);
+	
+	struct Voxel {
+		BlockIndex index;
+		VoxelBlock block;
+		Voxel(BlockIndex index, VoxelBlock block) : index(index), block(block) {}
+	};
+	STATIC_ASSERT_SIZE(Voxel, 8);
 #endif
 
 // For use by GPU for processing of lighting
