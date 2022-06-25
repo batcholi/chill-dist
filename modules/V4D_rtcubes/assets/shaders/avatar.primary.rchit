@@ -942,6 +942,7 @@ float sdfSphere(vec3 p, float r) {
 #ifdef SHADER_RCHIT
 	// Standard Block Lighting stuff
 	#define MAX_ACCUMULATION 1000
+	#define ACCUMULATOR_MAX_FRAME_INDEX_DIFF 1000
 	#define ACCUMULATOR_MULTIPLIER 4
 	#define DIRECT_SUN_LIGHT_MULTIPLIER 8
 	#define SUN_LIGHT_SOLID_ANGLE 0.03
@@ -1211,8 +1212,9 @@ STATIC_ASSERT_SIZE(BlockIndex, 2);
 // For use by GPU for processing of lighting
 BUFFER_REFERENCE_STRUCT(16) ClientChunkLightingData {
 	aligned_f32vec4 radiance[MAX_BLOCKS_PER_CHUNK];
+	aligned_uint64_t frameIndex[MAX_BLOCKS_PER_CHUNK];
 };
-STATIC_ASSERT_ALIGNED16_SIZE(ClientChunkLightingData, 16*MAX_BLOCKS_PER_CHUNK);
+STATIC_ASSERT_ALIGNED16_SIZE(ClientChunkLightingData, 16*MAX_BLOCKS_PER_CHUNK + 8*MAX_BLOCKS_PER_CHUNK);
 
 BUFFER_REFERENCE_STRUCT_READONLY(16) ClientChunkData {
 	// Adjacent chunkData
@@ -1327,7 +1329,10 @@ STATIC_ASSERT_ALIGNED16_SIZE(ClientChunkData, 48 + MAX_BLOCKS_PER_CHUNK + MAX_BL
 					vec3 color = ray.color.rgb * originalRay.color.rgb * ACCUMULATOR_MULTIPLIER;
 					ray = originalRay;
 					
-					
+					if (abs(int(ClientChunkData(chunkID).lighting.frameIndex[blockIndex]) - int(camera.frameIndex)) > ACCUMULATOR_MAX_FRAME_INDEX_DIFF) {
+						accumulation = 1;
+					}
+					ClientChunkData(chunkID).lighting.frameIndex[blockIndex] = camera.frameIndex;
 					vec3 l = ClientChunkData(chunkID).lighting.radiance[blockIndex].rgb;
 					ClientChunkData(chunkID).lighting.radiance[blockIndex] = vec4(mix(l, color, 1.0/accumulation), accumulation);
 				
@@ -1364,12 +1369,19 @@ STATIC_ASSERT_ALIGNED16_SIZE(ClientChunkData, 48 + MAX_BLOCKS_PER_CHUNK + MAX_BL
 							}
 							ivec3 pos = facingBlockPos + adjacentSides[i];
 							uint64_t adjacentBlockChunkID = chunkID;
-							if (GetBlock(adjacentBlockChunkID, pos) && ClientChunkData(adjacentBlockChunkID).occlusion[BlockIndex(pos.x, pos.y, pos.z)] == 0) {
-								float accumulation = atomicExchange(ClientChunkData(adjacentBlockChunkID).lighting.radiance[BlockIndex(pos.x, pos.y, pos.z)].a, -1);
-								if (accumulation >= 0) {
-									accumulation = min(accumulation + 1, MAX_ACCUMULATION);
-									vec3 l = ClientChunkData(adjacentBlockChunkID).lighting.radiance[BlockIndex(pos.x, pos.y, pos.z)].rgb;
-									ClientChunkData(adjacentBlockChunkID).lighting.radiance[BlockIndex(pos.x, pos.y, pos.z)] = vec4(mix(l, color, mixRatio / accumulation), accumulation);
+							if (GetBlock(adjacentBlockChunkID, pos)) {
+								uint32_t adjacentBlockIndex = BlockIndex(pos.x, pos.y, pos.z);
+								if (ClientChunkData(adjacentBlockChunkID).occlusion[adjacentBlockIndex] == 0) {
+									float accumulation = atomicExchange(ClientChunkData(adjacentBlockChunkID).lighting.radiance[adjacentBlockIndex].a, -1);
+									if (accumulation >= 0) {
+										accumulation = min(accumulation + 1, MAX_ACCUMULATION);
+										if (abs(int(ClientChunkData(adjacentBlockChunkID).lighting.frameIndex[adjacentBlockIndex]) - int(camera.frameIndex)) > ACCUMULATOR_MAX_FRAME_INDEX_DIFF) {
+											accumulation = 1;
+										}
+										ClientChunkData(adjacentBlockChunkID).lighting.frameIndex[adjacentBlockIndex] = camera.frameIndex;
+										vec3 l = ClientChunkData(adjacentBlockChunkID).lighting.radiance[adjacentBlockIndex].rgb;
+										ClientChunkData(adjacentBlockChunkID).lighting.radiance[adjacentBlockIndex] = vec4(mix(l, color, mixRatio / accumulation), accumulation);
+									}
 								}
 							}
 						}
