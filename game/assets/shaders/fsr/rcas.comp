@@ -223,6 +223,7 @@
 // #define RENDERABLE_MASK_ (1u<< RENDERABLE_TYPE_)
 #define RENDERABLE_ALL 0xff
 #define RENDERABLE_PRIMARY (~RENDERABLE_MASK_SELF)
+#define RENDERABLE_ALL_EXCEPT_WATER (RENDERABLE_ALL & ~RENDERABLE_MASK_WATER)
 #define RENDERABLE_PRIMARY_EXCEPT_WATER (RENDERABLE_PRIMARY & ~RENDERABLE_MASK_WATER)
 
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -276,15 +277,17 @@ BUFFER_REFERENCE_STRUCT_READONLY(16) VoxelData {
 };
 STATIC_ASSERT_ALIGNED16_SIZE(VoxelData, 32)
 
-BUFFER_REFERENCE_STRUCT_READONLY(16) VoxelGeometryData {
+BUFFER_REFERENCE_STRUCT_READONLY(16) GeometryData {
 	aligned_uint8_t sbtHandle[32];
 	BUFFER_REFERENCE_ADDR(VoxelData) voxels;
-	aligned_uint64_t extra[3]; // Arbitrary data defined per-shader
+	aligned_VkDeviceAddress vertices;
+	aligned_VkDeviceAddress indices32;
+	aligned_VkDeviceAddress indices16;
 };
-STATIC_ASSERT_ALIGNED16_SIZE(VoxelGeometryData, 64)
+STATIC_ASSERT_ALIGNED16_SIZE(GeometryData, 64)
 
 BUFFER_REFERENCE_STRUCT_READONLY(16) RenderableInstanceData {
-	BUFFER_REFERENCE_ADDR(VoxelGeometryData) geometries;
+	BUFFER_REFERENCE_ADDR(GeometryData) geometries;
 	aligned_uint64_t _unused;
 };
 STATIC_ASSERT_ALIGNED16_SIZE(RenderableInstanceData, 16)
@@ -474,7 +477,7 @@ vec3 ApplyToneMapping(in vec3 in_color) {
 	// HDR ToneMapping (Reinhard)
 	float lumRgbTotal = camera.luminance.r + camera.luminance.g + camera.luminance.b;
 	float exposure = lumRgbTotal > 0 ? camera.luminance.a / lumRgbTotal : 1;
-	color.rgb = vec3(1.0) - exp(-color.rgb * clamp(exposure, 0.0001, 10.0));
+	color.rgb = vec3(1.0) - exp(-color.rgb * clamp(exposure, 0.001, 2.0));
 	
 	// Contrast / Brightness
 	const float contrast = 1.05;

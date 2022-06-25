@@ -227,6 +227,7 @@
 // #define RENDERABLE_MASK_ (1u<< RENDERABLE_TYPE_)
 #define RENDERABLE_ALL 0xff
 #define RENDERABLE_PRIMARY (~RENDERABLE_MASK_SELF)
+#define RENDERABLE_ALL_EXCEPT_WATER (RENDERABLE_ALL & ~RENDERABLE_MASK_WATER)
 #define RENDERABLE_PRIMARY_EXCEPT_WATER (RENDERABLE_PRIMARY & ~RENDERABLE_MASK_WATER)
 
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -280,15 +281,17 @@ BUFFER_REFERENCE_STRUCT_READONLY(16) VoxelData {
 };
 STATIC_ASSERT_ALIGNED16_SIZE(VoxelData, 32)
 
-BUFFER_REFERENCE_STRUCT_READONLY(16) VoxelGeometryData {
+BUFFER_REFERENCE_STRUCT_READONLY(16) GeometryData {
 	aligned_uint8_t sbtHandle[32];
 	BUFFER_REFERENCE_ADDR(VoxelData) voxels;
-	aligned_uint64_t extra[3]; // Arbitrary data defined per-shader
+	aligned_VkDeviceAddress vertices;
+	aligned_VkDeviceAddress indices32;
+	aligned_VkDeviceAddress indices16;
 };
-STATIC_ASSERT_ALIGNED16_SIZE(VoxelGeometryData, 64)
+STATIC_ASSERT_ALIGNED16_SIZE(GeometryData, 64)
 
 BUFFER_REFERENCE_STRUCT_READONLY(16) RenderableInstanceData {
-	BUFFER_REFERENCE_ADDR(VoxelGeometryData) geometries;
+	BUFFER_REFERENCE_ADDR(GeometryData) geometries;
 	aligned_uint64_t _unused;
 };
 STATIC_ASSERT_ALIGNED16_SIZE(RenderableInstanceData, 16)
@@ -478,7 +481,7 @@ vec3 ApplyToneMapping(in vec3 in_color) {
 	// HDR ToneMapping (Reinhard)
 	float lumRgbTotal = camera.luminance.r + camera.luminance.g + camera.luminance.b;
 	float exposure = lumRgbTotal > 0 ? camera.luminance.a / lumRgbTotal : 1;
-	color.rgb = vec3(1.0) - exp(-color.rgb * clamp(exposure, 0.0001, 10.0));
+	color.rgb = vec3(1.0) - exp(-color.rgb * clamp(exposure, 0.001, 2.0));
 	
 	// Contrast / Brightness
 	const float contrast = 1.05;
@@ -728,6 +731,15 @@ vec3 RandomInUnitSphere(inout uint seed) {
 
 #define SBT_HITGROUPS_PER_GEOMETRY 1
 
+#define RENDERER_OPTION_TEXTURES (1u<< 0)
+#define RENDERER_OPTION_REFLECTIONS (1u<< 1)
+#define RENDERER_OPTION_TRANSPARENCY (1u<< 2)
+#define RENDERER_OPTION_INDIRECT_LIGHTING (1u<< 3)
+#define RENDERER_OPTION_DIRECT_LIGHTING (1u<< 4)
+#define RENDERER_OPTION_SOFT_SHADOWS (1u<< 5)
+
+#define RENDERER_DEBUG_MODE_NONE 0
+#define RENDERER_DEBUG_MODE_RAYGEN_TIME 1
 
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////
 // Structs and Buffer References -- Must use aligned_* explicit arithmetic types (or VkDeviceAddress as an uint64_t, or BUFFER_REFERENCE_ADDR(StructType))
@@ -753,6 +765,9 @@ struct RendererData {
 	aligned_uint8_t debugChunks;
 	aligned_f32vec3 skyLightColor;
 	aligned_f32vec3 torchLightColor;
+	aligned_f32vec3 sunDir;
+	aligned_uint32_t options;
+	aligned_uint8_t debugMode;
 };
 
 const float EPSILON = 0.00001;
@@ -762,6 +777,13 @@ layout(push_constant) uniform PushConstant {
 };
 
 layout(set = 1, binding = SET1_BINDING_RENDERER_DATA) buffer RendererDataBuffer { RendererData renderer; };
+
+bool OPTION_TEXTURES = (renderer.options & RENDERER_OPTION_TEXTURES) != 0;
+bool OPTION_REFLECTIONS = (renderer.options & RENDERER_OPTION_REFLECTIONS) != 0;
+bool OPTION_TRANSPARENCY = (renderer.options & RENDERER_OPTION_TRANSPARENCY) != 0;
+bool OPTION_INDIRECT_LIGHTING = (renderer.options & RENDERER_OPTION_INDIRECT_LIGHTING) != 0;
+bool OPTION_DIRECT_LIGHTING = (renderer.options & RENDERER_OPTION_DIRECT_LIGHTING) != 0;
+bool OPTION_SOFT_SHADOWS = (renderer.options & RENDERER_OPTION_SOFT_SHADOWS) != 0;
 
 #define RAY_PAYLOAD_PRIMARY 0
 struct RayPayload {
@@ -774,7 +796,7 @@ struct RayPayload {
 	int tlasInstanceIndex;
 	float totalDistanceFromEye;
 	vec3 nextPosition; // For translucency with Refraction
-	// float _unused;
+	uint bounces;
 };
 #ifdef SHADER_RGEN
 	layout(location = RAY_PAYLOAD_PRIMARY) rayPayloadEXT RayPayload ray;
@@ -917,47 +939,19 @@ float sdfSphere(vec3 p, float r) {
 	return length(p) - r;
 }
 
-#define APPLY_FRESNEL_REFLECTION(IndexOfRefraction) {\
-	ray.reflection = Fresnel((camera.viewMatrix * vec4(gl_WorldRayOriginEXT + gl_WorldRayDirectionEXT * ray.hitDistance, 1)).xyz, normalize(WORLD2VIEWNORMAL * ray.normal), IndexOfRefraction);\
-}
+#ifdef SHADER_RCHIT
+	// Standard Block Lighting stuff
+	#define MAX_ACCUMULATION 1000
+	#define ACCUMULATOR_MULTIPLIER 4
+	#define DIRECT_SUN_LIGHT_MULTIPLIER 8
+	#define SUN_LIGHT_SOLID_ANGLE 0.03
 
-#define APPLY_STANDARD_BLOCK_LIGHTING {\
-	const int nbAdjacentSides = 18;\
-	const ivec3 adjacentSides[nbAdjacentSides] = {\
-		ivec3( 0, 0, 1),\
-		ivec3( 0, 1, 0),\
-		ivec3( 1, 0, 0),\
-		ivec3( 0, 0,-1),\
-		ivec3( 0,-1, 0),\
-		ivec3(-1, 0, 0),\
-		ivec3( 0,-1,-1),\
-		ivec3( 1, 0, 1),\
-		ivec3( 0, 1, 1),\
-		ivec3( 1, 1, 0),\
-		ivec3(-1, 0,-1),\
-		ivec3(-1,-1, 0),\
-		ivec3( 0,-1, 1),\
-		ivec3(-1, 0, 1),\
-		ivec3(-1, 1, 0),\
-		ivec3( 0, 1,-1),\
-		ivec3( 1, 0,-1),\
-		ivec3( 1,-1, 0),\
-	};\
-	uint64_t chunkID = VOXEL.extra;\
-	ivec3 facingBlockPos = AABB_CENTER_INT + ivec3(round(ray.normal));\
-	vec4 lighting = vec4(GetBlockLighting(chunkID, facingBlockPos), 1);\
-	for (int i = 0; i < nbAdjacentSides; ++i) {\
-		if (dot(vec3(adjacentSides[i]), ray.normal) == 0) {\
-			ivec3 adjacentBlockPos = facingBlockPos + adjacentSides[i];\
-			uint64_t adjacentBlockChunkID = chunkID;\
-			vec3 p = (ray.localPosition - AABB_CENTER) - vec3(adjacentSides[i]);\
-			lighting += vec4(GetBlockLighting(adjacentBlockChunkID, adjacentBlockPos) * (1 - clamp(sdfSphere(p, 0.667), 0, 1)), 1);\
-		}\
-	}\
-	ray.color.rgb *= clamp(lighting.rgb/lighting.a, 0, 1);\
-}
-
-#endif // _RTCUBES_SHADER_BASE_INCLUDED_
+	void ApplyFresnelReflection(float indexOfRefraction) {
+		ray.reflection = Fresnel((camera.viewMatrix * vec4(gl_WorldRayOriginEXT + gl_WorldRayDirectionEXT * ray.hitDistance, 1)).xyz, normalize(WORLD2VIEWNORMAL * ray.normal), indexOfRefraction);
+	}
+	
+	#extension GL_EXT_shader_atomic_float : require
+	
 #ifdef __cplusplus
 #endif
 #ifdef __cplusplus
@@ -1111,39 +1105,31 @@ float sdfSphere(vec3 p, float r) {
 	
 #endif
 
-#define MAX_BLOCK_XZ 16
-#define MAX_BLOCK_Y 512
+#define BLOCK_INDEX_BITS_XZ 3 // 3=8x8x1024, 4=16x16x256, 5=32x32x64
+
+#define BLOCK_INDEX_BITS_Y uint16_t(16u - BLOCK_INDEX_BITS_XZ - BLOCK_INDEX_BITS_XZ)
+// MAX_BLOCK_* is the TOTAL NUMBER of blocks in that dimension
+#define MAX_BLOCK_XZ uint16_t(1u << BLOCK_INDEX_BITS_XZ)
+#define MAX_BLOCK_Y uint16_t(1u << BLOCK_INDEX_BITS_Y)
 #define MAX_BLOCK_X MAX_BLOCK_XZ
 #define MAX_BLOCK_Z MAX_BLOCK_XZ
-#define MAX_BLOCKS_PER_CHUNK (MAX_BLOCK_X*MAX_BLOCK_Y*MAX_BLOCK_Z)
+#define MAX_BLOCKS_PER_CHUNK (uint32_t(MAX_BLOCK_X)*MAX_BLOCK_Y*MAX_BLOCK_Z)
 
 #define MAX_SKY_LIGHT_LEVEL 15
 #define MAX_TORCH_LIGHT_LEVEL 15
 #define MAX_WATER_DEPTH 63
 #define WATER_LEVELS 8
 
-// #define FACE_PLUS_X 0x01
-// #define FACE_MINUS_X 0x02
-// #define FACE_PLUS_Z 0x04
-// #define FACE_MINUS_Z 0x08
-// #define FACE_PLUS_Y 0x10
-// #define FACE_MINUS_Y 0x20
-// #define FACE_PLUSMINUS_X (FACE_PLUS_X|FACE_MINUS_X)
-// #define FACE_PLUSMINUS_Z (FACE_PLUS_Z|FACE_MINUS_Z)
-// #define FACE_PLUSMINUS_Y (FACE_PLUS_Y|FACE_MINUS_Y)
-// #define FACE_ALL_BITS 0x3f
-
 #ifdef __cplusplus
 	union BlockIndex {
-		uint32_t index;
+		uint16_t index;
 		struct Position {
-			uint32_t x : 4; // 16
-			uint32_t z : 4; // 16
-			uint32_t y : 9; // 512
-			uint32_t _ : 15; // padding
-			Position(uint32_t x, uint32_t y, uint32_t z) : x(x), z(z), y(y), _(0) {}
+			uint16_t x : BLOCK_INDEX_BITS_XZ;
+			uint16_t z : BLOCK_INDEX_BITS_XZ;
+			uint16_t y : BLOCK_INDEX_BITS_Y;
+			Position(uint16_t x, uint16_t y, uint16_t z) : x(x), z(z), y(y) {}
 		} pos;
-		BlockIndex(uint32_t index = 0) : index(index) {
+		BlockIndex(uint16_t index = 0) : index(index) {
 			assert(index < MAX_BLOCKS_PER_CHUNK);
 		}
 		BlockIndex(const glm::ivec3& p) : pos(p.x, p.y, p.z) {
@@ -1161,7 +1147,7 @@ float sdfSphere(vec3 p, float r) {
 		glm::ivec3 Position() const {
 			return {pos.x,pos.y,pos.z};
 		}
-		operator uint32_t() const {
+		operator uint16_t() const {
 			assert(index < MAX_BLOCKS_PER_CHUNK);
 			return index;
 		}
@@ -1171,22 +1157,16 @@ float sdfSphere(vec3 p, float r) {
 		}
 	};
 #else
-	#define BlockIndex(x,y,z) (uint32_t(x) | (uint32_t(z) << 4) | (uint32_t(y) << 8))
+	#define BlockIndex(x,y,z) (uint16_t(x) | (uint16_t(z) << BLOCK_INDEX_BITS_XZ) | (uint16_t(y) << (BLOCK_INDEX_BITS_XZ+BLOCK_INDEX_BITS_XZ)))
 #endif
-STATIC_ASSERT_SIZE(BlockIndex, 4);
+STATIC_ASSERT_SIZE(BlockIndex, 2);
 
 // Used in ClientChunkData for GPU calculation of lighting as well as Block-Specific stuff
 #ifdef __cplusplus
 	typedef uint8_t BlockData;// extra Block-Specific data (custom structure per block type)
-	struct BlockLighting {
-		uint8_t light_torch : 4; // 0:15 level of light by torches
-		uint8_t light_sky : 4; // 0:15 level of light by sky (Flipped bits so that zero means fully lit)
-	};
 #else
 	#define BlockData uint8_t
-	#define BlockLighting uint8_t
 #endif
-STATIC_ASSERT_SIZE(BlockLighting, 1);
 
 #ifdef __cplusplus
 	// For chunk storage on disk and server-side processing
@@ -1196,14 +1176,11 @@ STATIC_ASSERT_SIZE(BlockLighting, 1);
 			struct {
 				uint16_t type;// maximum of 65k different types of blocks, total, including all mods
 				BlockData data;
-				BlockLighting lighting;
+				uint8_t _padding;
 			};
 		};
 		VoxelBlock() : _rawData(0) {}
-		VoxelBlock(uint16_t type) : type(type), data(0) {
-			lighting.light_torch = 0;
-			lighting.light_sky = 0;
-		}
+		VoxelBlock(uint16_t type) : type(type), data(0), _padding(0) {}
 		bool operator==(const VoxelBlock& other) const {
 			return other.type == type && other.data == data;
 		}
@@ -1217,6 +1194,7 @@ STATIC_ASSERT_SIZE(BlockLighting, 1);
 	struct NetworkBlock {
 		int64_t chunkID;
 		BlockIndex index;
+		uint16_t _padding;
 		VoxelBlock block;
 		NetworkBlock(int64_t chunkID, BlockIndex index, VoxelBlock block) : chunkID(chunkID), index(index), block(block) {}
 	};
@@ -1231,6 +1209,11 @@ STATIC_ASSERT_SIZE(BlockLighting, 1);
 #endif
 
 // For use by GPU for processing of lighting
+BUFFER_REFERENCE_STRUCT(16) ClientChunkLightingData {
+	aligned_f32vec4 radiance[MAX_BLOCKS_PER_CHUNK];
+};
+STATIC_ASSERT_ALIGNED16_SIZE(ClientChunkLightingData, 16*MAX_BLOCKS_PER_CHUNK);
+
 BUFFER_REFERENCE_STRUCT_READONLY(16) ClientChunkData {
 	// Adjacent chunkData
 	aligned_VkDeviceAddress plusX;
@@ -1238,10 +1221,12 @@ BUFFER_REFERENCE_STRUCT_READONLY(16) ClientChunkData {
 	aligned_VkDeviceAddress plusZ;
 	aligned_VkDeviceAddress minusZ;
 	// blocks
+	BUFFER_REFERENCE_ADDR(ClientChunkLightingData) lighting;
+	aligned_VkDeviceAddress _unused;
 	BlockData blockData[MAX_BLOCKS_PER_CHUNK];
-	BlockLighting blockLighting[MAX_BLOCKS_PER_CHUNK];
+	uint8_t occlusion[MAX_BLOCKS_PER_CHUNK];
 };
-STATIC_ASSERT_ALIGNED16_SIZE(ClientChunkData, 32 + 2*MAX_BLOCKS_PER_CHUNK);
+STATIC_ASSERT_ALIGNED16_SIZE(ClientChunkData, 48 + MAX_BLOCKS_PER_CHUNK + MAX_BLOCKS_PER_CHUNK);
 
 #ifndef __cplusplus
 	//
@@ -1282,22 +1267,213 @@ STATIC_ASSERT_ALIGNED16_SIZE(ClientChunkData, 32 + 2*MAX_BLOCKS_PER_CHUNK);
 		}
 	#endif
 	vec3 GetBlockLighting(inout uint64_t chunkID, inout ivec3 pos) {
-		int skyLevel = MAX_SKY_LIGHT_LEVEL;
-		int torchLevel = 0;
 		if (GetBlock(chunkID, pos)) {
-			BlockLighting lighting = ClientChunkData(chunkID).blockLighting[BlockIndex(pos.x, pos.y, pos.z)];
-			skyLevel = (~(lighting >> 4)) & 0xf; // Flipped
-			torchLevel = lighting & 0xf;
+			if (OPTION_INDIRECT_LIGHTING) {
+				return ClientChunkData(chunkID).lighting.radiance[BlockIndex(pos.x, pos.y, pos.z)].rgb * (ClientChunkData(chunkID).occlusion[BlockIndex(pos.x, pos.y, pos.z)]==0?1:0);
+			} else {
+				return vec3(ClientChunkData(chunkID).occlusion[BlockIndex(pos.x, pos.y, pos.z)]==0?1:0);
+			}
 		}
-		return min(vec3(1), renderer.skyLightColor * pow(float(skyLevel) / MAX_SKY_LIGHT_LEVEL, 4.0) + renderer.torchLightColor * pow(float(torchLevel) / 15, 4.0));
+		return vec3(0);
 	}
 #endif
+	
+	layout(set = 1, binding = SET1_BINDING_TLAS) uniform accelerationStructureEXT tlas;
+
+	void ApplyStandardBlockLighting(float diffuseMultiplier, float specularMultiplier, float specularPower) {
+		uint seed = InitRandomSeed(InitRandomSeed(gl_LaunchIDEXT.x, gl_LaunchIDEXT.y), uint(camera.frameIndex));
+
+		const int nbAdjacentSides = 18;
+		const ivec3 adjacentSides[nbAdjacentSides] = {
+			ivec3( 0, 0, 1),
+			ivec3( 0, 1, 0),
+			ivec3( 1, 0, 0),
+			ivec3( 0, 0,-1),
+			ivec3( 0,-1, 0),
+			ivec3(-1, 0, 0),
+			ivec3( 0,-1,-1),
+			ivec3( 1, 0, 1),
+			ivec3( 0, 1, 1),
+			ivec3( 1, 1, 0),
+			ivec3(-1, 0,-1),
+			ivec3(-1,-1, 0),
+			ivec3( 0,-1, 1),
+			ivec3(-1, 0, 1),
+			ivec3(-1, 1, 0),
+			ivec3( 0, 1,-1),
+			ivec3( 1, 0,-1),
+			ivec3( 1,-1, 0),
+		};
+		
+		if (OPTION_INDIRECT_LIGHTING) {
+			
+			uint64_t chunkID = VOXEL.extra;
+			ivec3 facingBlockPos = AABB_CENTER_INT + ivec3(round(ray.normal));
+			if (!GetBlock(chunkID, facingBlockPos)) {
+				return;
+			}
+			uint16_t blockIndex = BlockIndex(facingBlockPos.x, facingBlockPos.y, facingBlockPos.z);
+			
+			if (ray.bounces++ == 0) {
+				float accumulation = atomicExchange(ClientChunkData(chunkID).lighting.radiance[blockIndex].a, -1);
+				if (accumulation >= 0) {
+					accumulation = min(accumulation + 1, MAX_ACCUMULATION);
+					
+					RayPayload originalRay = ray;
+					vec3 randomBounceDirection = normalize(RandomInUnitSphere(seed));
+					if (dot(ray.normal, randomBounceDirection) < 0) randomBounceDirection *= -1;
+					ray.hitDistance = 0;
+					traceRayEXT(tlas, 0, RENDERABLE_PRIMARY, 0/*rayType*/, SBT_HITGROUPS_PER_GEOMETRY/*nbRayTypes*/, 0/*missIndex*/, ray.nextPosition, camera.zNear, randomBounceDirection, camera.zFar, RAY_PAYLOAD_PRIMARY);
+					vec3 color = ray.color.rgb * originalRay.color.rgb * ACCUMULATOR_MULTIPLIER;
+					ray = originalRay;
+					
+					
+					vec3 l = ClientChunkData(chunkID).lighting.radiance[blockIndex].rgb;
+					ClientChunkData(chunkID).lighting.radiance[blockIndex] = vec4(mix(l, color, 1.0/accumulation), accumulation);
+				
+					for (int i = 0; i < nbAdjacentSides; ++i) {
+						float mixRatio = 0.5;
+						if (dot(vec3(adjacentSides[i]), ray.normal) == 0) {
+							if (abs(adjacentSides[i].x) + abs(adjacentSides[i].y) + abs(adjacentSides[i].z) == 2) {
+								mixRatio *= 0.5;
+								uint diagonalsOccluded = 0;
+								if (adjacentSides[i].x != 0) {
+									ivec3 pos = facingBlockPos + adjacentSides[i] - ivec3(adjacentSides[i].x, 0, 0);
+									uint64_t adjacentBlockChunkID = chunkID;
+									if (GetBlock(adjacentBlockChunkID, pos) && ClientChunkData(adjacentBlockChunkID).occlusion[BlockIndex(pos.x, pos.y, pos.z)] != 0) {
+										diagonalsOccluded++;
+									}
+								}
+								if (adjacentSides[i].y != 0) {
+									ivec3 pos = facingBlockPos + adjacentSides[i] - ivec3(0, adjacentSides[i].y, 0);
+									uint64_t adjacentBlockChunkID = chunkID;
+									if (GetBlock(adjacentBlockChunkID, pos) && ClientChunkData(adjacentBlockChunkID).occlusion[BlockIndex(pos.x, pos.y, pos.z)] != 0) {
+										diagonalsOccluded++;
+									}
+								}
+								if (adjacentSides[i].z != 0) {
+									ivec3 pos = facingBlockPos + adjacentSides[i] - ivec3(0, 0, adjacentSides[i].z);
+									uint64_t adjacentBlockChunkID = chunkID;
+									if (GetBlock(adjacentBlockChunkID, pos) && ClientChunkData(adjacentBlockChunkID).occlusion[BlockIndex(pos.x, pos.y, pos.z)] != 0) {
+										diagonalsOccluded++;
+									}
+								}
+								if (diagonalsOccluded >= 2) {
+									continue;
+								}
+							}
+							ivec3 pos = facingBlockPos + adjacentSides[i];
+							uint64_t adjacentBlockChunkID = chunkID;
+							if (GetBlock(adjacentBlockChunkID, pos) && ClientChunkData(adjacentBlockChunkID).occlusion[BlockIndex(pos.x, pos.y, pos.z)] == 0) {
+								float accumulation = atomicExchange(ClientChunkData(adjacentBlockChunkID).lighting.radiance[BlockIndex(pos.x, pos.y, pos.z)].a, -1);
+								if (accumulation >= 0) {
+									accumulation = min(accumulation + 1, MAX_ACCUMULATION);
+									vec3 l = ClientChunkData(adjacentBlockChunkID).lighting.radiance[BlockIndex(pos.x, pos.y, pos.z)].rgb;
+									ClientChunkData(adjacentBlockChunkID).lighting.radiance[BlockIndex(pos.x, pos.y, pos.z)] = vec4(mix(l, color, mixRatio / accumulation), accumulation);
+								}
+							}
+						}
+					}
+				}
+			}
+		}
+		
+		{// Apply standard block lighting
+			uint64_t chunkID = VOXEL.extra;
+			ivec3 facingBlockPos = AABB_CENTER_INT + ivec3(round(ray.normal));
+			vec4 lighting = vec4(GetBlockLighting(chunkID, facingBlockPos), 1);
+			for (int i = 0; i < nbAdjacentSides; ++i) {
+				if (dot(vec3(adjacentSides[i]), ray.normal) == 0) {
+					if (abs(adjacentSides[i].x) + abs(adjacentSides[i].y) + abs(adjacentSides[i].z) == 2) {
+						uint diagonalsOccluded = 0;
+						if (adjacentSides[i].x != 0) {
+							ivec3 pos = facingBlockPos + adjacentSides[i] - ivec3(adjacentSides[i].x, 0, 0);
+							uint64_t adjacentBlockChunkID = chunkID;
+							if (GetBlock(adjacentBlockChunkID, pos) && ClientChunkData(adjacentBlockChunkID).occlusion[BlockIndex(pos.x, pos.y, pos.z)] != 0) {
+								diagonalsOccluded++;
+							}
+						}
+						if (adjacentSides[i].y != 0) {
+							ivec3 pos = facingBlockPos + adjacentSides[i] - ivec3(0, adjacentSides[i].y, 0);
+							uint64_t adjacentBlockChunkID = chunkID;
+							if (GetBlock(adjacentBlockChunkID, pos) && ClientChunkData(adjacentBlockChunkID).occlusion[BlockIndex(pos.x, pos.y, pos.z)] != 0) {
+								diagonalsOccluded++;
+							}
+						}
+						if (adjacentSides[i].z != 0) {
+							ivec3 pos = facingBlockPos + adjacentSides[i] - ivec3(0, 0, adjacentSides[i].z);
+							uint64_t adjacentBlockChunkID = chunkID;
+							if (GetBlock(adjacentBlockChunkID, pos) && ClientChunkData(adjacentBlockChunkID).occlusion[BlockIndex(pos.x, pos.y, pos.z)] != 0) {
+								diagonalsOccluded++;
+							}
+						}
+						if (diagonalsOccluded == 2) {
+							lighting.a++;
+							continue;
+						}
+					}
+					ivec3 adjacentBlockPos = facingBlockPos + adjacentSides[i];
+					uint64_t adjacentBlockChunkID = chunkID;
+					vec3 p = (ray.localPosition - AABB_CENTER) - vec3(adjacentSides[i]);
+					lighting += vec4(GetBlockLighting(adjacentBlockChunkID, adjacentBlockPos) * (1 - clamp(sdfSphere(p, 0.667), 0, 1)), 1);
+				}
+			}
+			ray.color.rgb *= clamp(lighting.rgb/lighting.a, 0, 1);
+		}
+		
+		if (OPTION_DIRECT_LIGHTING) {
+			if (ray.bounces++ < 2) {// Direct Lighting (must apply this for diffuse materials only)
+				vec3 shadowRayDir = renderer.sunDir;
+				if (OPTION_SOFT_SHADOWS) {
+					float pointRadius = SUN_LIGHT_SOLID_ANGLE * RandomFloat(seed);
+					float pointAngle = RandomFloat(seed) * 2.0 * 3.1415926535;
+					vec2 diskPoint = vec2(pointRadius * cos(pointAngle), pointRadius * sin(pointAngle));
+					vec3 lightTangent = normalize(cross(shadowRayDir, ray.normal));
+					vec3 lightBitangent = normalize(cross(lightTangent, shadowRayDir));
+					shadowRayDir = normalize(shadowRayDir + diskPoint.x * lightTangent + diskPoint.y * lightBitangent);
+				}
+				if (dot(shadowRayDir, ray.normal) > 0.001) {
+					vec3 surfacePosition = ray.nextPosition + ray.normal * 0.001;
+					vec3 directLighting = vec3(1);
+					RayPayload originalRay = ray;
+					for (;;) {
+						if (dot(directLighting,directLighting) < 0.01) {
+							directLighting = vec3(0);
+							break;
+						}
+						ray.hitDistance = 0;
+						traceRayEXT(tlas, 0, RENDERABLE_ALL, 0/*rayType*/, SBT_HITGROUPS_PER_GEOMETRY/*nbRayTypes*/, 0/*missIndex*/, surfacePosition, camera.zNear, shadowRayDir, camera.zFar, RAY_PAYLOAD_PRIMARY);
+						if (ray.hitDistance == -1) {
+							vec3 diffuse = originalRay.color.rgb * renderer.skyLightColor * dot(renderer.sunDir, originalRay.normal) * DIRECT_SUN_LIGHT_MULTIPLIER * diffuseMultiplier;
+							vec3 specular = pow(length(originalRay.color.rgb), 0.5) * renderer.skyLightColor * pow(clamp(dot(originalRay.normal, normalize(renderer.sunDir - gl_WorldRayDirectionEXT)), 0, 1), specularPower) * specularMultiplier;
+							directLighting *= diffuse + specular;
+							break;
+						} else if (ray.color.a < 0.99) {
+							// Diffuse (within transparent non-air medium, like water or glass)
+							directLighting *= 1-ray.color.a;
+							surfacePosition = ray.nextPosition + shadowRayDir * 0.01;
+						} else {
+							directLighting = vec3(0);
+							break;
+						}
+					}
+					ray = originalRay;
+					ray.color.rgb += directLighting;
+				}
+			}
+		}
+	}
+#endif
+
+#endif // _RTCUBES_SHADER_BASE_INCLUDED_
 
 
 
 #extension GL_ARB_shader_clock : enable
 
 layout(set = 1, binding = SET1_BINDING_TLAS) uniform accelerationStructureEXT tlas;
+
+const float PROBABILITY_OF_BOUNCE = 0.5;
 
 void main() {
 	CameraData cam = cameras[pushConstant.cameraIndex];
@@ -1309,43 +1485,53 @@ void main() {
 	const vec2 uv = pixelCenter/vec2(gl_LaunchSizeEXT.xy);
 	const vec3 initialRayPosition = inverse(cam.viewMatrix)[3].xyz;
 	const vec3 initialRayDirection = normalize(VIEW2WORLDNORMAL * normalize(vec4(inverse(mat4(cam.projectionMatrixWithTXAA)) * vec4(uv*2-1, 1, 1)).xyz));
+	// uint seed = InitRandomSeed(InitRandomSeed(gl_LaunchIDEXT.x, gl_LaunchIDEXT.y), uint(camera.frameIndex));
 	
 	// Final data to write
 	float depth;
 	vec3 motion;
-	vec3 color;
+	vec3 color = vec3(0);
 	
 	// Initialize ray payload
 	ray.totalDistanceFromEye = 0;
 	// Launch Primary Ray
 	ray.hitDistance = 0;
+	ray.bounces = 0;
 	traceRayEXT(tlas, 0, RENDERABLE_PRIMARY, 0/*rayType*/, SBT_HITGROUPS_PER_GEOMETRY/*nbRayTypes*/, 0/*missIndex*/, initialRayPosition, cam.zNear, initialRayDirection, cam.zFar, RAY_PAYLOAD_PRIMARY);
 	RayPayload firstRay = ray;
 	vec3 firstRayHitWorldPosition = initialRayPosition + initialRayDirection * firstRay.hitDistance;
-	float reflection = firstRay.reflection;
-	vec3 reflectDirection = normalize(reflect(initialRayDirection, firstRay.normal));
-	color = ray.color.rgb;
 	
-	// Transparent / Refraction
-	float translucency = 1.0 - clamp(ray.color.a, 0.01, 1);
-	while (ray.hitDistance > 0 && translucency > 0.01) {
-		ray.hitDistance = 0;
-		traceRayEXT(tlas, 0, RENDERABLE_ALL, 0/*rayType*/, SBT_HITGROUPS_PER_GEOMETRY/*nbRayTypes*/, 0/*missIndex*/, ray.nextPosition, cam.zNear, initialRayDirection, cam.zFar, RAY_PAYLOAD_PRIMARY);
-		color = mix(color, ray.color.rgb, translucency);
-		translucency *= 1.0 - clamp(ray.color.a, 0.01, 1);
+	color += ray.color.rgb;
+	
+	// Transparent
+	if (OPTION_TRANSPARENCY) {
+		float translucency = 1.0 - clamp(abs(ray.color.a), 0.01, 1);
+		while (ray.hitDistance > 0 && translucency > 0.01) {
+			ray.hitDistance = 0;
+			ray.bounces = 0;
+			traceRayEXT(tlas, 0, RENDERABLE_ALL, 0/*rayType*/, SBT_HITGROUPS_PER_GEOMETRY/*nbRayTypes*/, 0/*missIndex*/, ray.nextPosition, cam.zNear, initialRayDirection, cam.zFar, RAY_PAYLOAD_PRIMARY);
+			if (ray.color.a >= 0) {
+				color = mix(color, ray.color.rgb, translucency);
+			}
+			translucency *= 1.0 - clamp(abs(ray.color.a), 0.01, 1);
+		}
 	}
 	
 	// Reflection
-	if (ray.hitDistance > 0) {
-		vec3 rayPosition = firstRayHitWorldPosition;
-		while (reflection > 0.01) {
-			if (dot(reflectDirection, reflectDirection) == 0) break;
-			ray.hitDistance = 0;
-			traceRayEXT(tlas, 0, RENDERABLE_ALL, 0/*rayType*/, SBT_HITGROUPS_PER_GEOMETRY/*nbRayTypes*/, 0/*missIndex*/, rayPosition, cam.zNear, reflectDirection, cam.zFar, RAY_PAYLOAD_PRIMARY);
-			color = mix(color, ray.color.rgb, clamp(reflection, 0, 1));
-			reflection *= clamp(ray.reflection, 0, 0.5);
-			rayPosition += reflectDirection * ray.hitDistance;
-			reflectDirection = normalize(reflect(reflectDirection, ray.normal));
+	if (OPTION_REFLECTIONS) {
+		if (ray.hitDistance > 0) {
+			vec3 rayPosition = firstRayHitWorldPosition;
+			vec3 reflectDirection = reflect(initialRayDirection, firstRay.normal);
+			float reflection = firstRay.reflection;
+			while (reflection > 0.01) {
+				if (dot(reflectDirection, reflectDirection) == 0) break;
+				ray.hitDistance = 0;
+				traceRayEXT(tlas, 0, RENDERABLE_ALL, 0/*rayType*/, SBT_HITGROUPS_PER_GEOMETRY/*nbRayTypes*/, 0/*missIndex*/, rayPosition, cam.zNear, reflectDirection, cam.zFar, RAY_PAYLOAD_PRIMARY);
+				color = mix(color, ray.color.rgb, clamp(reflection, 0, 1));
+				reflection *= clamp(ray.reflection, 0, 0.5);
+				rayPosition += reflectDirection * ray.hitDistance;
+				reflectDirection = normalize(reflect(reflectDirection, ray.normal));
+			}
 		}
 	}
 	
@@ -1390,7 +1576,9 @@ void main() {
 	imageStore(img_motion, imgCoords, vec4(motion, 0));
 	imageStore(img_composite, imgCoords, vec4(clamp(color, vec3(0), vec3(1e3)), 1));
 	
-	// // Debug Ray-Tracing Time
-	// imageStore(img_composite, imgCoords, vec4(Heatmap(float(double(clockARB() - startTime) / double(500000.0))), 1));
+	// Debug Ray-Tracing Time
+	if (renderer.debugMode == RENDERER_DEBUG_MODE_RAYGEN_TIME) {
+		imageStore(img_composite, imgCoords, vec4(Heatmap(float(double(clockARB() - startTime) / double(500000.0))), 1));
+	}
 }
 

@@ -1,6 +1,7 @@
 echo WATCHING: "/home/olivier/projects/chill/build/debug/modules/V4D_rtcubes/assets/shaders/voxel.meta"
 inotifywait -e modify \
   '/home/olivier/projects/chill/src/v4d/modules/V4D_rtcubes/assets/shaders/voxel.glsl'\
+  '/home/olivier/projects/chill/src/v4d/game/graphics/Block.hh'\
   '/home/olivier/projects/chill/src/v4d/modules/V4D_rtcubes/cpp_glsl.hh'\
   '/home/olivier/projects/chill/src/v4d/modules/V4D_rtcubes/base.glsl'\
   '/home/olivier/projects/chill/src/v4d/game/graphics/glsl/base.glsl'\

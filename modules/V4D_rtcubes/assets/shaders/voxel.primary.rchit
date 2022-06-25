@@ -227,6 +227,7 @@
 // #define RENDERABLE_MASK_ (1u<< RENDERABLE_TYPE_)
 #define RENDERABLE_ALL 0xff
 #define RENDERABLE_PRIMARY (~RENDERABLE_MASK_SELF)
+#define RENDERABLE_ALL_EXCEPT_WATER (RENDERABLE_ALL & ~RENDERABLE_MASK_WATER)
 #define RENDERABLE_PRIMARY_EXCEPT_WATER (RENDERABLE_PRIMARY & ~RENDERABLE_MASK_WATER)
 
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -280,15 +281,17 @@ BUFFER_REFERENCE_STRUCT_READONLY(16) VoxelData {
 };
 STATIC_ASSERT_ALIGNED16_SIZE(VoxelData, 32)
 
-BUFFER_REFERENCE_STRUCT_READONLY(16) VoxelGeometryData {
+BUFFER_REFERENCE_STRUCT_READONLY(16) GeometryData {
 	aligned_uint8_t sbtHandle[32];
 	BUFFER_REFERENCE_ADDR(VoxelData) voxels;
-	aligned_uint64_t extra[3]; // Arbitrary data defined per-shader
+	aligned_VkDeviceAddress vertices;
+	aligned_VkDeviceAddress indices32;
+	aligned_VkDeviceAddress indices16;
 };
-STATIC_ASSERT_ALIGNED16_SIZE(VoxelGeometryData, 64)
+STATIC_ASSERT_ALIGNED16_SIZE(GeometryData, 64)
 
 BUFFER_REFERENCE_STRUCT_READONLY(16) RenderableInstanceData {
-	BUFFER_REFERENCE_ADDR(VoxelGeometryData) geometries;
+	BUFFER_REFERENCE_ADDR(GeometryData) geometries;
 	aligned_uint64_t _unused;
 };
 STATIC_ASSERT_ALIGNED16_SIZE(RenderableInstanceData, 16)
@@ -478,7 +481,7 @@ vec3 ApplyToneMapping(in vec3 in_color) {
 	// HDR ToneMapping (Reinhard)
 	float lumRgbTotal = camera.luminance.r + camera.luminance.g + camera.luminance.b;
 	float exposure = lumRgbTotal > 0 ? camera.luminance.a / lumRgbTotal : 1;
-	color.rgb = vec3(1.0) - exp(-color.rgb * clamp(exposure, 0.0001, 10.0));
+	color.rgb = vec3(1.0) - exp(-color.rgb * clamp(exposure, 0.001, 2.0));
 	
 	// Contrast / Brightness
 	const float contrast = 1.05;
@@ -728,6 +731,15 @@ vec3 RandomInUnitSphere(inout uint seed) {
 
 #define SBT_HITGROUPS_PER_GEOMETRY 1
 
+#define RENDERER_OPTION_TEXTURES (1u<< 0)
+#define RENDERER_OPTION_REFLECTIONS (1u<< 1)
+#define RENDERER_OPTION_TRANSPARENCY (1u<< 2)
+#define RENDERER_OPTION_INDIRECT_LIGHTING (1u<< 3)
+#define RENDERER_OPTION_DIRECT_LIGHTING (1u<< 4)
+#define RENDERER_OPTION_SOFT_SHADOWS (1u<< 5)
+
+#define RENDERER_DEBUG_MODE_NONE 0
+#define RENDERER_DEBUG_MODE_RAYGEN_TIME 1
 
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////
 // Structs and Buffer References -- Must use aligned_* explicit arithmetic types (or VkDeviceAddress as an uint64_t, or BUFFER_REFERENCE_ADDR(StructType))
@@ -753,6 +765,9 @@ struct RendererData {
 	aligned_uint8_t debugChunks;
 	aligned_f32vec3 skyLightColor;
 	aligned_f32vec3 torchLightColor;
+	aligned_f32vec3 sunDir;
+	aligned_uint32_t options;
+	aligned_uint8_t debugMode;
 };
 
 const float EPSILON = 0.00001;
@@ -762,6 +777,13 @@ layout(push_constant) uniform PushConstant {
 };
 
 layout(set = 1, binding = SET1_BINDING_RENDERER_DATA) buffer RendererDataBuffer { RendererData renderer; };
+
+bool OPTION_TEXTURES = (renderer.options & RENDERER_OPTION_TEXTURES) != 0;
+bool OPTION_REFLECTIONS = (renderer.options & RENDERER_OPTION_REFLECTIONS) != 0;
+bool OPTION_TRANSPARENCY = (renderer.options & RENDERER_OPTION_TRANSPARENCY) != 0;
+bool OPTION_INDIRECT_LIGHTING = (renderer.options & RENDERER_OPTION_INDIRECT_LIGHTING) != 0;
+bool OPTION_DIRECT_LIGHTING = (renderer.options & RENDERER_OPTION_DIRECT_LIGHTING) != 0;
+bool OPTION_SOFT_SHADOWS = (renderer.options & RENDERER_OPTION_SOFT_SHADOWS) != 0;
 
 #define RAY_PAYLOAD_PRIMARY 0
 struct RayPayload {
@@ -774,7 +796,7 @@ struct RayPayload {
 	int tlasInstanceIndex;
 	float totalDistanceFromEye;
 	vec3 nextPosition; // For translucency with Refraction
-	// float _unused;
+	uint bounces;
 };
 #ifdef SHADER_RGEN
 	layout(location = RAY_PAYLOAD_PRIMARY) rayPayloadEXT RayPayload ray;
@@ -917,45 +939,531 @@ float sdfSphere(vec3 p, float r) {
 	return length(p) - r;
 }
 
-#define APPLY_FRESNEL_REFLECTION(IndexOfRefraction) {\
-	ray.reflection = Fresnel((camera.viewMatrix * vec4(gl_WorldRayOriginEXT + gl_WorldRayDirectionEXT * ray.hitDistance, 1)).xyz, normalize(WORLD2VIEWNORMAL * ray.normal), IndexOfRefraction);\
-}
+#ifdef SHADER_RCHIT
+	// Standard Block Lighting stuff
+	#define MAX_ACCUMULATION 1000
+	#define ACCUMULATOR_MULTIPLIER 4
+	#define DIRECT_SUN_LIGHT_MULTIPLIER 8
+	#define SUN_LIGHT_SOLID_ANGLE 0.03
 
-#define APPLY_STANDARD_BLOCK_LIGHTING {\
-	const int nbAdjacentSides = 18;\
-	const ivec3 adjacentSides[nbAdjacentSides] = {\
-		ivec3( 0, 0, 1),\
-		ivec3( 0, 1, 0),\
-		ivec3( 1, 0, 0),\
-		ivec3( 0, 0,-1),\
-		ivec3( 0,-1, 0),\
-		ivec3(-1, 0, 0),\
-		ivec3( 0,-1,-1),\
-		ivec3( 1, 0, 1),\
-		ivec3( 0, 1, 1),\
-		ivec3( 1, 1, 0),\
-		ivec3(-1, 0,-1),\
-		ivec3(-1,-1, 0),\
-		ivec3( 0,-1, 1),\
-		ivec3(-1, 0, 1),\
-		ivec3(-1, 1, 0),\
-		ivec3( 0, 1,-1),\
-		ivec3( 1, 0,-1),\
-		ivec3( 1,-1, 0),\
-	};\
-	uint64_t chunkID = VOXEL.extra;\
-	ivec3 facingBlockPos = AABB_CENTER_INT + ivec3(round(ray.normal));\
-	vec4 lighting = vec4(GetBlockLighting(chunkID, facingBlockPos), 1);\
-	for (int i = 0; i < nbAdjacentSides; ++i) {\
-		if (dot(vec3(adjacentSides[i]), ray.normal) == 0) {\
-			ivec3 adjacentBlockPos = facingBlockPos + adjacentSides[i];\
-			uint64_t adjacentBlockChunkID = chunkID;\
-			vec3 p = (ray.localPosition - AABB_CENTER) - vec3(adjacentSides[i]);\
-			lighting += vec4(GetBlockLighting(adjacentBlockChunkID, adjacentBlockPos) * (1 - clamp(sdfSphere(p, 0.667), 0, 1)), 1);\
-		}\
-	}\
-	ray.color.rgb *= clamp(lighting.rgb/lighting.a, 0, 1);\
-}
+	void ApplyFresnelReflection(float indexOfRefraction) {
+		ray.reflection = Fresnel((camera.viewMatrix * vec4(gl_WorldRayOriginEXT + gl_WorldRayDirectionEXT * ray.hitDistance, 1)).xyz, normalize(WORLD2VIEWNORMAL * ray.normal), indexOfRefraction);
+	}
+	
+	#extension GL_EXT_shader_atomic_float : require
+	
+#ifdef __cplusplus
+#endif
+#ifdef __cplusplus
+
+// Vulkan4D Core Header
+
+#define V4D_VERSION_MAJOR 0
+#define V4D_VERSION_MINOR 0
+#define V4D_VERSION_PATCH 0
+
+// V4D Core class (Compiled into v4d.dll)
+# include "Core.h"
+
+#endif // __cplusplus
+#ifdef __cplusplus
+
+	// https://github.com/KhronosGroup/GLSL/blob/master/extensions/ext/GL_EXT_shader_explicit_arithmetic_types.txt
+
+	#define aligned_int8_t alignas(1) int8_t
+	#define aligned_uint8_t alignas(1) uint8_t
+	#define aligned_int16_t alignas(2) int16_t
+	#define aligned_uint16_t alignas(2) uint16_t
+	#define aligned_int32_t alignas(4) int32_t
+	#define aligned_uint32_t alignas(4) uint32_t
+	#define aligned_int64_t alignas(8) int64_t
+	#define aligned_uint64_t alignas(8) uint64_t
+
+	#define aligned_float32_t alignas(4) glm::float32_t
+	#define aligned_float64_t alignas(8) glm::float64_t
+
+	#define aligned_i8vec2 alignas(2) glm::i8vec2
+	#define aligned_u8vec2 alignas(2) glm::u8vec2
+	#define aligned_i8vec3 alignas(4) glm::i8vec3
+	#define aligned_u8vec3 alignas(4) glm::u8vec3
+	#define aligned_i8vec4 alignas(4) glm::i8vec4
+	#define aligned_u8vec4 alignas(4) glm::u8vec4
+
+	#define aligned_i16vec2 alignas(4) glm::i16vec2
+	#define aligned_u16vec2 alignas(4) glm::u16vec2
+	#define aligned_i16vec3 alignas(8) glm::i16vec3
+	#define aligned_u16vec3 alignas(8) glm::u16vec3
+	#define aligned_i16vec4 alignas(8) glm::i16vec4
+	#define aligned_u16vec4 alignas(8) glm::u16vec4
+
+	#define aligned_f32vec2 alignas(8) glm::f32vec2
+	#define aligned_i32vec2 alignas(8) glm::i32vec2
+	#define aligned_u32vec2 alignas(8) glm::u32vec2
+	#define aligned_f32vec3 alignas(16) glm::f32vec3
+	#define aligned_i32vec3 alignas(16) glm::i32vec3
+	#define aligned_u32vec3 alignas(16) glm::u32vec3
+	#define aligned_f32vec4 alignas(16) glm::f32vec4
+	#define aligned_i32vec4 alignas(16) glm::i32vec4
+	#define aligned_u32vec4 alignas(16) glm::u32vec4
+
+	#define aligned_f64vec2 alignas(16) glm::f64vec2
+	#define aligned_i64vec2 alignas(16) glm::i64vec2
+	#define aligned_u64vec2 alignas(16) glm::u64vec2
+	#define aligned_f64vec3 alignas(32) glm::f64vec3
+	#define aligned_i64vec3 alignas(32) glm::i64vec3
+	#define aligned_u64vec3 alignas(32) glm::u64vec3
+	#define aligned_f64vec4 alignas(32) glm::f64vec4
+	#define aligned_i64vec4 alignas(32) glm::i64vec4
+	#define aligned_u64vec4 alignas(32) glm::u64vec4
+
+	#define aligned_f32mat3x4 alignas(16) glm::f32mat3x4
+	#define aligned_f64mat3x4 alignas(32) glm::f64mat3x4
+	
+	#define aligned_f32mat4 alignas(16) glm::f32mat4
+	#define aligned_f64mat4 alignas(32) glm::f64mat4
+	
+	#define aligned_VkDeviceAddress alignas(8) VkDeviceAddress
+
+	#define STATIC_ASSERT_ALIGNED16_SIZE(T, X) static_assert(sizeof(T) == X && sizeof(T) % 16 == 0);
+	#define STATIC_ASSERT_SIZE(T, X) static_assert(sizeof(T) == X);
+	#define PUSH_CONSTANT_STRUCT struct
+	#define BUFFER_REFERENCE_STRUCT(align) struct
+	#define BUFFER_REFERENCE_STRUCT_READONLY(align) struct
+	#define BUFFER_REFERENCE_STRUCT_WRITEONLY(align) struct
+	#define BUFFER_REFERENCE_ADDR(type) aligned_VkDeviceAddress
+	
+#else // GLSL
+
+	#extension GL_EXT_shader_explicit_arithmetic_types_int8 : enable
+	#extension GL_EXT_shader_explicit_arithmetic_types_int16 : enable
+	#extension GL_EXT_shader_explicit_arithmetic_types_int32 : enable
+	#extension GL_EXT_shader_explicit_arithmetic_types_int64 : enable
+	#extension GL_EXT_shader_explicit_arithmetic_types_float32 : enable
+	#extension GL_EXT_shader_explicit_arithmetic_types_float64 : enable
+	
+	#define aligned_int8_t int8_t
+	#define aligned_uint8_t uint8_t
+	#define aligned_int16_t int16_t
+	#define aligned_uint16_t uint16_t
+	#define aligned_int32_t int32_t
+	#define aligned_uint32_t uint32_t
+	#define aligned_int64_t int64_t
+	#define aligned_uint64_t uint64_t
+
+	#define aligned_float32_t float32_t
+	#define aligned_float64_t float64_t
+
+	#define aligned_i8vec2 i8vec2
+	#define aligned_u8vec2 u8vec2
+	#define aligned_i8vec3 i8vec3
+	#define aligned_u8vec3 u8vec3
+	#define aligned_i8vec4 i8vec4
+	#define aligned_u8vec4 u8vec4
+
+	#define aligned_i16vec2 i16vec2
+	#define aligned_u16vec2 u16vec2
+	#define aligned_i16vec3 i16vec3
+	#define aligned_u16vec3 u16vec3
+	#define aligned_i16vec4 i16vec4
+	#define aligned_u16vec4 u16vec4
+
+	#define aligned_f32vec2 f32vec2
+	#define aligned_i32vec2 i32vec2
+	#define aligned_u32vec2 u32vec2
+	#define aligned_f32vec3 f32vec3
+	#define aligned_i32vec3 i32vec3
+	#define aligned_u32vec3 u32vec3
+	#define aligned_f32vec4 f32vec4
+	#define aligned_i32vec4 i32vec4
+	#define aligned_u32vec4 u32vec4
+
+	#define aligned_f64vec2 f64vec2
+	#define aligned_i64vec2 i64vec2
+	#define aligned_u64vec2 u64vec2
+	#define aligned_f64vec3 f64vec3
+	#define aligned_i64vec3 i64vec3
+	#define aligned_u64vec3 u64vec3
+	#define aligned_f64vec4 f64vec4
+	#define aligned_i64vec4 i64vec4
+	#define aligned_u64vec4 u64vec4
+
+	#define aligned_f32mat3x4 f32mat3x4
+	#define aligned_f64mat3x4 f64mat3x4
+	
+	#define aligned_f32mat4 f32mat4
+	#define aligned_f64mat4 f64mat4
+	
+	#define aligned_VkDeviceAddress uint64_t
+	
+	#define STATIC_ASSERT_ALIGNED16_SIZE(T,X)
+	#define STATIC_ASSERT_SIZE(T,X)
+	#define PUSH_CONSTANT_STRUCT layout(push_constant) uniform
+	#define BUFFER_REFERENCE_STRUCT(align) layout(buffer_reference, std430, buffer_reference_align = align) buffer
+	#define BUFFER_REFERENCE_STRUCT_READONLY(align) layout(buffer_reference, std430, buffer_reference_align = align) buffer readonly
+	#define BUFFER_REFERENCE_STRUCT_WRITEONLY(align) layout(buffer_reference, std430, buffer_reference_align = align) buffer writeonly
+	#define BUFFER_REFERENCE_ADDR(type) type
+	
+#endif
+
+#define BLOCK_INDEX_BITS_XZ 3 // 3=8x8x1024, 4=16x16x256, 5=32x32x64
+
+#define BLOCK_INDEX_BITS_Y uint16_t(16u - BLOCK_INDEX_BITS_XZ - BLOCK_INDEX_BITS_XZ)
+// MAX_BLOCK_* is the TOTAL NUMBER of blocks in that dimension
+#define MAX_BLOCK_XZ uint16_t(1u << BLOCK_INDEX_BITS_XZ)
+#define MAX_BLOCK_Y uint16_t(1u << BLOCK_INDEX_BITS_Y)
+#define MAX_BLOCK_X MAX_BLOCK_XZ
+#define MAX_BLOCK_Z MAX_BLOCK_XZ
+#define MAX_BLOCKS_PER_CHUNK (uint32_t(MAX_BLOCK_X)*MAX_BLOCK_Y*MAX_BLOCK_Z)
+
+#define MAX_SKY_LIGHT_LEVEL 15
+#define MAX_TORCH_LIGHT_LEVEL 15
+#define MAX_WATER_DEPTH 63
+#define WATER_LEVELS 8
+
+#ifdef __cplusplus
+	union BlockIndex {
+		uint16_t index;
+		struct Position {
+			uint16_t x : BLOCK_INDEX_BITS_XZ;
+			uint16_t z : BLOCK_INDEX_BITS_XZ;
+			uint16_t y : BLOCK_INDEX_BITS_Y;
+			Position(uint16_t x, uint16_t y, uint16_t z) : x(x), z(z), y(y) {}
+		} pos;
+		BlockIndex(uint16_t index = 0) : index(index) {
+			assert(index < MAX_BLOCKS_PER_CHUNK);
+		}
+		BlockIndex(const glm::ivec3& p) : pos(p.x, p.y, p.z) {
+			assert(p.x >= 0);
+			assert(p.z >= 0);
+			assert(p.y >= 0);
+			assert(p.x < MAX_BLOCK_X);
+			assert(p.z < MAX_BLOCK_Z);
+			assert(p.y < MAX_BLOCK_Y);
+			assert(index < MAX_BLOCKS_PER_CHUNK);
+		}
+		operator glm::ivec3() const {
+			return {pos.x,pos.y,pos.z};
+		}
+		glm::ivec3 Position() const {
+			return {pos.x,pos.y,pos.z};
+		}
+		operator uint16_t() const {
+			assert(index < MAX_BLOCKS_PER_CHUNK);
+			return index;
+		}
+		BlockIndex operator + (const glm::ivec3& offset) const {
+			glm::ivec3 p = (*this) + offset;
+			return BlockIndex{p};
+		}
+	};
+#else
+	#define BlockIndex(x,y,z) (uint16_t(x) | (uint16_t(z) << BLOCK_INDEX_BITS_XZ) | (uint16_t(y) << (BLOCK_INDEX_BITS_XZ+BLOCK_INDEX_BITS_XZ)))
+#endif
+STATIC_ASSERT_SIZE(BlockIndex, 2);
+
+// Used in ClientChunkData for GPU calculation of lighting as well as Block-Specific stuff
+#ifdef __cplusplus
+	typedef uint8_t BlockData;// extra Block-Specific data (custom structure per block type)
+#else
+	#define BlockData uint8_t
+#endif
+
+#ifdef __cplusplus
+	// For chunk storage on disk and server-side processing
+	struct VoxelBlock {
+		union {
+			uint32_t _rawData;
+			struct {
+				uint16_t type;// maximum of 65k different types of blocks, total, including all mods
+				BlockData data;
+				uint8_t _padding;
+			};
+		};
+		VoxelBlock() : _rawData(0) {}
+		VoxelBlock(uint16_t type) : type(type), data(0), _padding(0) {}
+		bool operator==(const VoxelBlock& other) const {
+			return other.type == type && other.data == data;
+		}
+		bool operator!=(const VoxelBlock& other) const {
+			return !(*this==other);
+		}
+		operator uint32_t() const {return _rawData;}
+	};
+	STATIC_ASSERT_SIZE(VoxelBlock, 4);
+	
+	struct NetworkBlock {
+		int64_t chunkID;
+		BlockIndex index;
+		uint16_t _padding;
+		VoxelBlock block;
+		NetworkBlock(int64_t chunkID, BlockIndex index, VoxelBlock block) : chunkID(chunkID), index(index), block(block) {}
+	};
+	STATIC_ASSERT_SIZE(NetworkBlock, 16);
+	
+	struct Voxel {
+		BlockIndex index;
+		VoxelBlock block;
+		Voxel(BlockIndex index, VoxelBlock block) : index(index), block(block) {}
+	};
+	STATIC_ASSERT_SIZE(Voxel, 8);
+#endif
+
+// For use by GPU for processing of lighting
+BUFFER_REFERENCE_STRUCT(16) ClientChunkLightingData {
+	aligned_f32vec4 radiance[MAX_BLOCKS_PER_CHUNK];
+};
+STATIC_ASSERT_ALIGNED16_SIZE(ClientChunkLightingData, 16*MAX_BLOCKS_PER_CHUNK);
+
+BUFFER_REFERENCE_STRUCT_READONLY(16) ClientChunkData {
+	// Adjacent chunkData
+	aligned_VkDeviceAddress plusX;
+	aligned_VkDeviceAddress minusX;
+	aligned_VkDeviceAddress plusZ;
+	aligned_VkDeviceAddress minusZ;
+	// blocks
+	BUFFER_REFERENCE_ADDR(ClientChunkLightingData) lighting;
+	aligned_VkDeviceAddress _unused;
+	BlockData blockData[MAX_BLOCKS_PER_CHUNK];
+	uint8_t occlusion[MAX_BLOCKS_PER_CHUNK];
+};
+STATIC_ASSERT_ALIGNED16_SIZE(ClientChunkData, 48 + MAX_BLOCKS_PER_CHUNK + MAX_BLOCKS_PER_CHUNK);
+
+#ifndef __cplusplus
+	//
+	bool GetBlock(inout uint64_t chunkID, inout ivec3 pos) {
+		ClientChunkData chunk = ClientChunkData(chunkID); // Because of a bug in AMD drivers, we cannot pass the buffer_reference as an argument to a function, instead we pass its address
+		while (pos.x < 0 && chunk.minusX != 0) {
+			chunk = ClientChunkData(chunk.minusX);
+			pos.x += MAX_BLOCK_X;
+		}
+		while (pos.z < 0 && chunk.minusZ != 0) {
+			chunk = ClientChunkData(chunk.minusZ);
+			pos.z += MAX_BLOCK_Z;
+		}
+		while (pos.x >= MAX_BLOCK_X && chunk.plusX != 0) {
+			chunk = ClientChunkData(chunk.plusX);
+			pos.x -= MAX_BLOCK_X;
+		}
+		while (pos.z >= MAX_BLOCK_Z && chunk.plusZ != 0) {
+			chunk = ClientChunkData(chunk.plusZ);
+			pos.z -= MAX_BLOCK_Z;
+		}
+		chunkID = uint64_t(chunk); // Because of the AMD bug mentioned above...
+		return pos.x >= 0 && pos.y >= 0 && pos.z >= 0 && pos.x < MAX_BLOCK_X && pos.y < MAX_BLOCK_Y && pos.z < MAX_BLOCK_Z;
+	}
+	BlockData GetBlockData(inout uint64_t chunkID, inout ivec3 pos) {
+		if (GetBlock(chunkID, pos)) {
+			return ClientChunkData(chunkID).blockData[BlockIndex(pos.x, pos.y, pos.z)];
+		}
+		return BlockData(0); // invalid
+	}
+	#if defined(SHADER_RCHIT) || defined(SHADER_RAHIT) || defined(SHADER_RINT)
+		BlockData GetBlockData() {
+			ivec3 pos = AABB_CENTER_INT;
+			if (pos.x >= 0 && pos.y >= 0 && pos.z >= 0 && pos.x < MAX_BLOCK_X && pos.y < MAX_BLOCK_Y && pos.z < MAX_BLOCK_Z) {
+				return ClientChunkData(VOXEL.extra).blockData[BlockIndex(pos.x, pos.y, pos.z)];
+			}
+			return BlockData(0); // invalid
+		}
+	#endif
+	vec3 GetBlockLighting(inout uint64_t chunkID, inout ivec3 pos) {
+		if (GetBlock(chunkID, pos)) {
+			if (OPTION_INDIRECT_LIGHTING) {
+				return ClientChunkData(chunkID).lighting.radiance[BlockIndex(pos.x, pos.y, pos.z)].rgb * (ClientChunkData(chunkID).occlusion[BlockIndex(pos.x, pos.y, pos.z)]==0?1:0);
+			} else {
+				return vec3(ClientChunkData(chunkID).occlusion[BlockIndex(pos.x, pos.y, pos.z)]==0?1:0);
+			}
+		}
+		return vec3(0);
+	}
+#endif
+	
+	layout(set = 1, binding = SET1_BINDING_TLAS) uniform accelerationStructureEXT tlas;
+
+	void ApplyStandardBlockLighting(float diffuseMultiplier, float specularMultiplier, float specularPower) {
+		uint seed = InitRandomSeed(InitRandomSeed(gl_LaunchIDEXT.x, gl_LaunchIDEXT.y), uint(camera.frameIndex));
+
+		const int nbAdjacentSides = 18;
+		const ivec3 adjacentSides[nbAdjacentSides] = {
+			ivec3( 0, 0, 1),
+			ivec3( 0, 1, 0),
+			ivec3( 1, 0, 0),
+			ivec3( 0, 0,-1),
+			ivec3( 0,-1, 0),
+			ivec3(-1, 0, 0),
+			ivec3( 0,-1,-1),
+			ivec3( 1, 0, 1),
+			ivec3( 0, 1, 1),
+			ivec3( 1, 1, 0),
+			ivec3(-1, 0,-1),
+			ivec3(-1,-1, 0),
+			ivec3( 0,-1, 1),
+			ivec3(-1, 0, 1),
+			ivec3(-1, 1, 0),
+			ivec3( 0, 1,-1),
+			ivec3( 1, 0,-1),
+			ivec3( 1,-1, 0),
+		};
+		
+		if (OPTION_INDIRECT_LIGHTING) {
+			
+			uint64_t chunkID = VOXEL.extra;
+			ivec3 facingBlockPos = AABB_CENTER_INT + ivec3(round(ray.normal));
+			if (!GetBlock(chunkID, facingBlockPos)) {
+				return;
+			}
+			uint16_t blockIndex = BlockIndex(facingBlockPos.x, facingBlockPos.y, facingBlockPos.z);
+			
+			if (ray.bounces++ == 0) {
+				float accumulation = atomicExchange(ClientChunkData(chunkID).lighting.radiance[blockIndex].a, -1);
+				if (accumulation >= 0) {
+					accumulation = min(accumulation + 1, MAX_ACCUMULATION);
+					
+					RayPayload originalRay = ray;
+					vec3 randomBounceDirection = normalize(RandomInUnitSphere(seed));
+					if (dot(ray.normal, randomBounceDirection) < 0) randomBounceDirection *= -1;
+					ray.hitDistance = 0;
+					traceRayEXT(tlas, 0, RENDERABLE_PRIMARY, 0/*rayType*/, SBT_HITGROUPS_PER_GEOMETRY/*nbRayTypes*/, 0/*missIndex*/, ray.nextPosition, camera.zNear, randomBounceDirection, camera.zFar, RAY_PAYLOAD_PRIMARY);
+					vec3 color = ray.color.rgb * originalRay.color.rgb * ACCUMULATOR_MULTIPLIER;
+					ray = originalRay;
+					
+					
+					vec3 l = ClientChunkData(chunkID).lighting.radiance[blockIndex].rgb;
+					ClientChunkData(chunkID).lighting.radiance[blockIndex] = vec4(mix(l, color, 1.0/accumulation), accumulation);
+				
+					for (int i = 0; i < nbAdjacentSides; ++i) {
+						float mixRatio = 0.5;
+						if (dot(vec3(adjacentSides[i]), ray.normal) == 0) {
+							if (abs(adjacentSides[i].x) + abs(adjacentSides[i].y) + abs(adjacentSides[i].z) == 2) {
+								mixRatio *= 0.5;
+								uint diagonalsOccluded = 0;
+								if (adjacentSides[i].x != 0) {
+									ivec3 pos = facingBlockPos + adjacentSides[i] - ivec3(adjacentSides[i].x, 0, 0);
+									uint64_t adjacentBlockChunkID = chunkID;
+									if (GetBlock(adjacentBlockChunkID, pos) && ClientChunkData(adjacentBlockChunkID).occlusion[BlockIndex(pos.x, pos.y, pos.z)] != 0) {
+										diagonalsOccluded++;
+									}
+								}
+								if (adjacentSides[i].y != 0) {
+									ivec3 pos = facingBlockPos + adjacentSides[i] - ivec3(0, adjacentSides[i].y, 0);
+									uint64_t adjacentBlockChunkID = chunkID;
+									if (GetBlock(adjacentBlockChunkID, pos) && ClientChunkData(adjacentBlockChunkID).occlusion[BlockIndex(pos.x, pos.y, pos.z)] != 0) {
+										diagonalsOccluded++;
+									}
+								}
+								if (adjacentSides[i].z != 0) {
+									ivec3 pos = facingBlockPos + adjacentSides[i] - ivec3(0, 0, adjacentSides[i].z);
+									uint64_t adjacentBlockChunkID = chunkID;
+									if (GetBlock(adjacentBlockChunkID, pos) && ClientChunkData(adjacentBlockChunkID).occlusion[BlockIndex(pos.x, pos.y, pos.z)] != 0) {
+										diagonalsOccluded++;
+									}
+								}
+								if (diagonalsOccluded >= 2) {
+									continue;
+								}
+							}
+							ivec3 pos = facingBlockPos + adjacentSides[i];
+							uint64_t adjacentBlockChunkID = chunkID;
+							if (GetBlock(adjacentBlockChunkID, pos) && ClientChunkData(adjacentBlockChunkID).occlusion[BlockIndex(pos.x, pos.y, pos.z)] == 0) {
+								float accumulation = atomicExchange(ClientChunkData(adjacentBlockChunkID).lighting.radiance[BlockIndex(pos.x, pos.y, pos.z)].a, -1);
+								if (accumulation >= 0) {
+									accumulation = min(accumulation + 1, MAX_ACCUMULATION);
+									vec3 l = ClientChunkData(adjacentBlockChunkID).lighting.radiance[BlockIndex(pos.x, pos.y, pos.z)].rgb;
+									ClientChunkData(adjacentBlockChunkID).lighting.radiance[BlockIndex(pos.x, pos.y, pos.z)] = vec4(mix(l, color, mixRatio / accumulation), accumulation);
+								}
+							}
+						}
+					}
+				}
+			}
+		}
+		
+		{// Apply standard block lighting
+			uint64_t chunkID = VOXEL.extra;
+			ivec3 facingBlockPos = AABB_CENTER_INT + ivec3(round(ray.normal));
+			vec4 lighting = vec4(GetBlockLighting(chunkID, facingBlockPos), 1);
+			for (int i = 0; i < nbAdjacentSides; ++i) {
+				if (dot(vec3(adjacentSides[i]), ray.normal) == 0) {
+					if (abs(adjacentSides[i].x) + abs(adjacentSides[i].y) + abs(adjacentSides[i].z) == 2) {
+						uint diagonalsOccluded = 0;
+						if (adjacentSides[i].x != 0) {
+							ivec3 pos = facingBlockPos + adjacentSides[i] - ivec3(adjacentSides[i].x, 0, 0);
+							uint64_t adjacentBlockChunkID = chunkID;
+							if (GetBlock(adjacentBlockChunkID, pos) && ClientChunkData(adjacentBlockChunkID).occlusion[BlockIndex(pos.x, pos.y, pos.z)] != 0) {
+								diagonalsOccluded++;
+							}
+						}
+						if (adjacentSides[i].y != 0) {
+							ivec3 pos = facingBlockPos + adjacentSides[i] - ivec3(0, adjacentSides[i].y, 0);
+							uint64_t adjacentBlockChunkID = chunkID;
+							if (GetBlock(adjacentBlockChunkID, pos) && ClientChunkData(adjacentBlockChunkID).occlusion[BlockIndex(pos.x, pos.y, pos.z)] != 0) {
+								diagonalsOccluded++;
+							}
+						}
+						if (adjacentSides[i].z != 0) {
+							ivec3 pos = facingBlockPos + adjacentSides[i] - ivec3(0, 0, adjacentSides[i].z);
+							uint64_t adjacentBlockChunkID = chunkID;
+							if (GetBlock(adjacentBlockChunkID, pos) && ClientChunkData(adjacentBlockChunkID).occlusion[BlockIndex(pos.x, pos.y, pos.z)] != 0) {
+								diagonalsOccluded++;
+							}
+						}
+						if (diagonalsOccluded == 2) {
+							lighting.a++;
+							continue;
+						}
+					}
+					ivec3 adjacentBlockPos = facingBlockPos + adjacentSides[i];
+					uint64_t adjacentBlockChunkID = chunkID;
+					vec3 p = (ray.localPosition - AABB_CENTER) - vec3(adjacentSides[i]);
+					lighting += vec4(GetBlockLighting(adjacentBlockChunkID, adjacentBlockPos) * (1 - clamp(sdfSphere(p, 0.667), 0, 1)), 1);
+				}
+			}
+			ray.color.rgb *= clamp(lighting.rgb/lighting.a, 0, 1);
+		}
+		
+		if (OPTION_DIRECT_LIGHTING) {
+			if (ray.bounces++ < 2) {// Direct Lighting (must apply this for diffuse materials only)
+				vec3 shadowRayDir = renderer.sunDir;
+				if (OPTION_SOFT_SHADOWS) {
+					float pointRadius = SUN_LIGHT_SOLID_ANGLE * RandomFloat(seed);
+					float pointAngle = RandomFloat(seed) * 2.0 * 3.1415926535;
+					vec2 diskPoint = vec2(pointRadius * cos(pointAngle), pointRadius * sin(pointAngle));
+					vec3 lightTangent = normalize(cross(shadowRayDir, ray.normal));
+					vec3 lightBitangent = normalize(cross(lightTangent, shadowRayDir));
+					shadowRayDir = normalize(shadowRayDir + diskPoint.x * lightTangent + diskPoint.y * lightBitangent);
+				}
+				if (dot(shadowRayDir, ray.normal) > 0.001) {
+					vec3 surfacePosition = ray.nextPosition + ray.normal * 0.001;
+					vec3 directLighting = vec3(1);
+					RayPayload originalRay = ray;
+					for (;;) {
+						if (dot(directLighting,directLighting) < 0.01) {
+							directLighting = vec3(0);
+							break;
+						}
+						ray.hitDistance = 0;
+						traceRayEXT(tlas, 0, RENDERABLE_ALL, 0/*rayType*/, SBT_HITGROUPS_PER_GEOMETRY/*nbRayTypes*/, 0/*missIndex*/, surfacePosition, camera.zNear, shadowRayDir, camera.zFar, RAY_PAYLOAD_PRIMARY);
+						if (ray.hitDistance == -1) {
+							vec3 diffuse = originalRay.color.rgb * renderer.skyLightColor * dot(renderer.sunDir, originalRay.normal) * DIRECT_SUN_LIGHT_MULTIPLIER * diffuseMultiplier;
+							vec3 specular = pow(length(originalRay.color.rgb), 0.5) * renderer.skyLightColor * pow(clamp(dot(originalRay.normal, normalize(renderer.sunDir - gl_WorldRayDirectionEXT)), 0, 1), specularPower) * specularMultiplier;
+							directLighting *= diffuse + specular;
+							break;
+						} else if (ray.color.a < 0.99) {
+							// Diffuse (within transparent non-air medium, like water or glass)
+							directLighting *= 1-ray.color.a;
+							surfacePosition = ray.nextPosition + shadowRayDir * 0.01;
+						} else {
+							directLighting = vec3(0);
+							break;
+						}
+					}
+					ray = originalRay;
+					ray.color.rgb += directLighting;
+				}
+			}
+		}
+	}
+#endif
 
 #endif // _RTCUBES_SHADER_BASE_INCLUDED_
 
