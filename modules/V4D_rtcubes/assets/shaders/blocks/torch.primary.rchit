@@ -1472,7 +1472,7 @@ void main() {
 	CLOSEST_HIT_BEGIN
 		CLOSEST_HIT_BOX_INTERSECTION_COMPUTE_NORMAL
 		
-		ray.color = vec4(renderer.torchLightColor * 10, 0.0);
+		ray.color = vec4(renderer.torchLightColor * 50, 1.0);
 		
 	CLOSEST_HIT_END
 	CLOSEST_HIT_BOX_AIM_WIREFRAME
