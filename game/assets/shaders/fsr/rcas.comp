@@ -189,6 +189,7 @@
 // up to 32 render options
 #define RENDER_OPTION_TXAA (1u<< 0)
 #define RENDER_OPTION_DLSS (1u<< 1)
+#define RENDER_OPTION_TONE_MAPPING (1u<< 2)
 
 // up to 32 debug options
 // #define RENDER_DEBUG_xxx (1u<< 0)

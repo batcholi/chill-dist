@@ -188,6 +188,7 @@
 // up to 32 render options
 #define RENDER_OPTION_TXAA (1u<< 0)
 #define RENDER_OPTION_DLSS (1u<< 1)
+#define RENDER_OPTION_TONE_MAPPING (1u<< 2)
 
 // up to 32 debug options
 // #define RENDER_DEBUG_xxx (1u<< 0)
@@ -583,6 +584,9 @@ void main() {
 		imageStore(img_history, coord, resolved);
 	}
 	
-	// discard; //TODO re-enable tone mapping??? or remove it...
-	out_resolved = vec4(ApplyToneMapping(resolved.rgb), 0);
+	if ((camera.options & RENDER_OPTION_TONE_MAPPING) != 0) {
+		out_resolved = vec4(ApplyToneMapping(resolved.rgb), 0);
+	} else {
+		discard;
+	}
 }

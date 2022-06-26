@@ -193,6 +193,7 @@
 // up to 32 render options
 #define RENDER_OPTION_TXAA (1u<< 0)
 #define RENDER_OPTION_DLSS (1u<< 1)
+#define RENDER_OPTION_TONE_MAPPING (1u<< 2)
 
 // up to 32 debug options
 // #define RENDER_DEBUG_xxx (1u<< 0)
@@ -942,9 +943,9 @@ float sdfSphere(vec3 p, float r) {
 #ifdef SHADER_RCHIT
 	// Standard Block Lighting stuff
 	#define MAX_ACCUMULATION 1000
-	#define ACCUMULATOR_MAX_FRAME_INDEX_DIFF 1000
-	#define ACCUMULATOR_MULTIPLIER 4
-	#define DIRECT_SUN_LIGHT_MULTIPLIER 8
+	#define ACCUMULATOR_MAX_FRAME_INDEX_DIFF 500
+	#define ACCUMULATOR_MULTIPLIER 3.1415926536
+	#define DIRECT_SUN_LIGHT_MULTIPLIER 3.1415926536
 	#define SUN_LIGHT_SOLID_ANGLE 0.03
 
 	void ApplyFresnelReflection(float indexOfRefraction) {
@@ -1307,6 +1308,75 @@ STATIC_ASSERT_ALIGNED16_SIZE(ClientChunkData, 48 + MAX_BLOCKS_PER_CHUNK + MAX_BL
 			ivec3( 1,-1, 0),
 		};
 		
+		const vec2 BlueNoiseInDisk[64] = vec2[64](
+			vec2(0.478712,0.875764),
+			vec2(-0.337956,-0.793959),
+			vec2(-0.955259,-0.028164),
+			vec2(0.864527,0.325689),
+			vec2(0.209342,-0.395657),
+			vec2(-0.106779,0.672585),
+			vec2(0.156213,0.235113),
+			vec2(-0.413644,-0.082856),
+			vec2(-0.415667,0.323909),
+			vec2(0.141896,-0.939980),
+			vec2(0.954932,-0.182516),
+			vec2(-0.766184,0.410799),
+			vec2(-0.434912,-0.458845),
+			vec2(0.415242,-0.078724),
+			vec2(0.728335,-0.491777),
+			vec2(-0.058086,-0.066401),
+			vec2(0.202990,0.686837),
+			vec2(-0.808362,-0.556402),
+			vec2(0.507386,-0.640839),
+			vec2(-0.723494,-0.229240),
+			vec2(0.489740,0.317826),
+			vec2(-0.622663,0.765301),
+			vec2(-0.010640,0.929347),
+			vec2(0.663146,0.647618),
+			vec2(-0.096674,-0.413835),
+			vec2(0.525945,-0.321063),
+			vec2(-0.122533,0.366019),
+			vec2(0.195235,-0.687983),
+			vec2(-0.563203,0.098748),
+			vec2(0.418563,0.561335),
+			vec2(-0.378595,0.800367),
+			vec2(0.826922,0.001024),
+			vec2(-0.085372,-0.766651),
+			vec2(-0.921920,0.183673),
+			vec2(-0.590008,-0.721799),
+			vec2(0.167751,-0.164393),
+			vec2(0.032961,-0.562530),
+			vec2(0.632900,-0.107059),
+			vec2(-0.464080,0.569669),
+			vec2(-0.173676,-0.958758),
+			vec2(-0.242648,-0.234303),
+			vec2(-0.275362,0.157163),
+			vec2(0.382295,-0.795131),
+			vec2(0.562955,0.115562),
+			vec2(0.190586,0.470121),
+			vec2(0.770764,-0.297576),
+			vec2(0.237281,0.931050),
+			vec2(-0.666642,-0.455871),
+			vec2(-0.905649,-0.298379),
+			vec2(0.339520,0.157829),
+			vec2(0.701438,-0.704100),
+			vec2(-0.062758,0.160346),
+			vec2(-0.220674,0.957141),
+			vec2(0.642692,0.432706),
+			vec2(-0.773390,-0.015272),
+			vec2(-0.671467,0.246880),
+			vec2(0.158051,0.062859),
+			vec2(0.806009,0.527232),
+			vec2(-0.057620,-0.247071),
+			vec2(0.333436,-0.516710),
+			vec2(-0.550658,-0.315773),
+			vec2(-0.652078,0.589846),
+			vec2(0.008818,0.530556),
+			vec2(-0.210004,0.519896) 
+		);
+		
+		vec3 albedo = ray.color.rgb;
+		
 		if (OPTION_INDIRECT_LIGHTING) {
 			
 			uint64_t chunkID = VOXEL.extra;
@@ -1318,26 +1388,27 @@ STATIC_ASSERT_ALIGNED16_SIZE(ClientChunkData, 48 + MAX_BLOCKS_PER_CHUNK + MAX_BL
 			
 			if (ray.bounces++ == 0) {
 				float accumulation = atomicExchange(ClientChunkData(chunkID).lighting.radiance[blockIndex].a, -1);
-				if (accumulation >= 0) {
+				if (accumulation != -1) {
 					accumulation = min(accumulation + 1, MAX_ACCUMULATION);
+					if (abs(int(ClientChunkData(chunkID).lighting.frameIndex[blockIndex]) - int(camera.frameIndex)) > ACCUMULATOR_MAX_FRAME_INDEX_DIFF) {
+						accumulation = 1;
+					}
 					
 					RayPayload originalRay = ray;
 					vec3 randomBounceDirection = normalize(RandomInUnitSphere(seed));
+					
 					if (dot(ray.normal, randomBounceDirection) < 0) randomBounceDirection *= -1;
 					ray.hitDistance = 0;
 					traceRayEXT(tlas, 0, RENDERABLE_PRIMARY, 0/*rayType*/, SBT_HITGROUPS_PER_GEOMETRY/*nbRayTypes*/, 0/*missIndex*/, ray.nextPosition, camera.zNear, randomBounceDirection, camera.zFar, RAY_PAYLOAD_PRIMARY);
 					vec3 color = ray.color.rgb * originalRay.color.rgb * ACCUMULATOR_MULTIPLIER;
 					ray = originalRay;
 					
-					if (abs(int(ClientChunkData(chunkID).lighting.frameIndex[blockIndex]) - int(camera.frameIndex)) > ACCUMULATOR_MAX_FRAME_INDEX_DIFF) {
-						accumulation = 1;
-					}
 					ClientChunkData(chunkID).lighting.frameIndex[blockIndex] = camera.frameIndex;
 					vec3 l = ClientChunkData(chunkID).lighting.radiance[blockIndex].rgb;
 					ClientChunkData(chunkID).lighting.radiance[blockIndex] = vec4(mix(l, color, 1.0/accumulation), accumulation);
 				
 					for (int i = 0; i < nbAdjacentSides; ++i) {
-						float mixRatio = 0.5;
+						float mixRatio = 0.25;
 						if (dot(vec3(adjacentSides[i]), ray.normal) == 0) {
 							if (abs(adjacentSides[i].x) + abs(adjacentSides[i].y) + abs(adjacentSides[i].z) == 2) {
 								mixRatio *= 0.5;
@@ -1373,7 +1444,7 @@ STATIC_ASSERT_ALIGNED16_SIZE(ClientChunkData, 48 + MAX_BLOCKS_PER_CHUNK + MAX_BL
 								uint32_t adjacentBlockIndex = BlockIndex(pos.x, pos.y, pos.z);
 								if (ClientChunkData(adjacentBlockChunkID).occlusion[adjacentBlockIndex] == 0) {
 									float accumulation = atomicExchange(ClientChunkData(adjacentBlockChunkID).lighting.radiance[adjacentBlockIndex].a, -1);
-									if (accumulation >= 0) {
+									if (accumulation != -1) {
 										accumulation = min(accumulation + 1, MAX_ACCUMULATION);
 										if (abs(int(ClientChunkData(adjacentBlockChunkID).lighting.frameIndex[adjacentBlockIndex]) - int(camera.frameIndex)) > ACCUMULATOR_MAX_FRAME_INDEX_DIFF) {
 											accumulation = 1;
@@ -1434,7 +1505,7 @@ STATIC_ASSERT_ALIGNED16_SIZE(ClientChunkData, 48 + MAX_BLOCKS_PER_CHUNK + MAX_BL
 		}
 		
 		if (OPTION_DIRECT_LIGHTING) {
-			if (ray.bounces++ < 2) {// Direct Lighting (must apply this for diffuse materials only)
+			if (ray.bounces++ < 4) {// Direct Lighting (must apply this for diffuse materials only)
 				vec3 shadowRayDir = renderer.sunDir;
 				if (OPTION_SOFT_SHADOWS) {
 					float pointRadius = SUN_LIGHT_SOLID_ANGLE * RandomFloat(seed);
@@ -1449,21 +1520,21 @@ STATIC_ASSERT_ALIGNED16_SIZE(ClientChunkData, 48 + MAX_BLOCKS_PER_CHUNK + MAX_BL
 					vec3 directLighting = vec3(1);
 					RayPayload originalRay = ray;
 					for (;;) {
-						if (dot(directLighting,directLighting) < 0.01) {
+						if (dot(directLighting,directLighting) < 0.00001) {
 							directLighting = vec3(0);
 							break;
 						}
 						ray.hitDistance = 0;
 						traceRayEXT(tlas, 0, RENDERABLE_ALL, 0/*rayType*/, SBT_HITGROUPS_PER_GEOMETRY/*nbRayTypes*/, 0/*missIndex*/, surfacePosition, camera.zNear, shadowRayDir, camera.zFar, RAY_PAYLOAD_PRIMARY);
 						if (ray.hitDistance == -1) {
-							vec3 diffuse = originalRay.color.rgb * renderer.skyLightColor * dot(renderer.sunDir, originalRay.normal) * DIRECT_SUN_LIGHT_MULTIPLIER * diffuseMultiplier;
-							vec3 specular = pow(length(originalRay.color.rgb), 0.5) * renderer.skyLightColor * pow(clamp(dot(originalRay.normal, normalize(renderer.sunDir - gl_WorldRayDirectionEXT)), 0, 1), specularPower) * specularMultiplier;
+							vec3 diffuse = albedo * renderer.skyLightColor * dot(renderer.sunDir, originalRay.normal) * DIRECT_SUN_LIGHT_MULTIPLIER * diffuseMultiplier;
+							vec3 specular = renderer.skyLightColor * pow(clamp(dot(originalRay.normal, normalize(renderer.sunDir - gl_WorldRayDirectionEXT)), 0, 1), specularPower) * specularMultiplier;
 							directLighting *= diffuse + specular;
 							break;
-						} else if (ray.color.a < 0.99) {
+						} else if (ray.color.a < 1.0) {
 							// Diffuse (within transparent non-air medium, like water or glass)
 							directLighting *= 1-ray.color.a;
-							surfacePosition = ray.nextPosition + shadowRayDir * 0.01;
+							surfacePosition = ray.nextPosition + shadowRayDir * 0.001;
 						} else {
 							directLighting = vec3(0);
 							break;
