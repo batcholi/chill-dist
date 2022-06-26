@@ -475,20 +475,19 @@ vec3 ApplyToneMapping(in vec3 in_color) {
 	vec3 color = in_color;
 	
 	// HDR ToneMapping (Reinhard)
-	float lumRgbTotal = camera.luminance.r + camera.luminance.g + camera.luminance.b;
-	float exposure = lumRgbTotal > 0 ? camera.luminance.a / lumRgbTotal : 1;
-	color.rgb = vec3(1.0) - exp(-color.rgb * clamp(exposure, 0.001, 2.0));
+	if ((camera.options & RENDER_OPTION_TONE_MAPPING) != 0) {
+		float lumRgbTotal = camera.luminance.r + camera.luminance.g + camera.luminance.b;
+		float exposure = lumRgbTotal > 0 ? camera.luminance.a / lumRgbTotal : 1;
+		color.rgb = vec3(1.0) - exp(-color.rgb * clamp(exposure, 0.001, 10.0));
+	}
 	
 	// Contrast / Brightness
-	const float contrast = 1.05;
-	const float brightness = 1.2;
-	if (contrast != 1.0 || brightness != 1.0) {
-		color.rgb = mix(vec3(0.5), color.rgb, contrast) * brightness;
+	if (camera.contrast != 1.0 || camera.brightness != 1.0) {
+		color.rgb = mix(vec3(0.5), color.rgb, camera.contrast) * camera.brightness;
 	}
 	
 	// Gamma correction
-	float gammaCorrection = 2.0;
-	color.rgb = pow(color.rgb, vec3(1.0 / gammaCorrection));
+	color.rgb = pow(color.rgb, vec3(1.0 / camera.gamma));
 	
 	return clamp(color, vec3(0), vec3(1));
 }

@@ -480,20 +480,19 @@ vec3 ApplyToneMapping(in vec3 in_color) {
 	vec3 color = in_color;
 	
 	// HDR ToneMapping (Reinhard)
-	float lumRgbTotal = camera.luminance.r + camera.luminance.g + camera.luminance.b;
-	float exposure = lumRgbTotal > 0 ? camera.luminance.a / lumRgbTotal : 1;
-	color.rgb = vec3(1.0) - exp(-color.rgb * clamp(exposure, 0.001, 2.0));
+	if ((camera.options & RENDER_OPTION_TONE_MAPPING) != 0) {
+		float lumRgbTotal = camera.luminance.r + camera.luminance.g + camera.luminance.b;
+		float exposure = lumRgbTotal > 0 ? camera.luminance.a / lumRgbTotal : 1;
+		color.rgb = vec3(1.0) - exp(-color.rgb * clamp(exposure, 0.001, 10.0));
+	}
 	
 	// Contrast / Brightness
-	const float contrast = 1.05;
-	const float brightness = 1.2;
-	if (contrast != 1.0 || brightness != 1.0) {
-		color.rgb = mix(vec3(0.5), color.rgb, contrast) * brightness;
+	if (camera.contrast != 1.0 || camera.brightness != 1.0) {
+		color.rgb = mix(vec3(0.5), color.rgb, camera.contrast) * camera.brightness;
 	}
 	
 	// Gamma correction
-	float gammaCorrection = 2.0;
-	color.rgb = pow(color.rgb, vec3(1.0 / gammaCorrection));
+	color.rgb = pow(color.rgb, vec3(1.0 / camera.gamma));
 	
 	return clamp(color, vec3(0), vec3(1));
 }
@@ -1558,17 +1557,18 @@ void main() {
 		
 		if (OPTION_TEXTURES) {
 			// Dirt texture
-			ray.color = ApplyTexture(1, BOX_COORD);
+			ray.color = ApplyTexture(1, BOX_COORD) ;// * vec4(0.8,0.95,1.0,1);
 			
 			// Grass texture
 			if (GetBlockData() == 1) {
+				const vec3 grassTint = vec3(0.15, 0.5, 0.15);
 				if (BOX_FACE == 4) {
 					// Top
-					vec4 grass = ApplyTexture(3, BOX_COORD) * vec4(0.4, 0.5, 0.25, 1.0);
+					vec4 grass = ApplyTexture(3, BOX_COORD) * vec4(grassTint, 1.0);
 					ray.color = mix(ray.color, grass, grass.a);
 				} else if (BOX_FACE != 1) {
 					// Sides
-					vec4 grass = ApplyTexture(2, BOX_COORD) * vec4(0.4, 0.5, 0.25, 1.0);
+					vec4 grass = ApplyTexture(2, BOX_COORD) * vec4(grassTint, 1.0);
 					ray.color = mix(ray.color, grass, grass.a);
 				}
 			}
