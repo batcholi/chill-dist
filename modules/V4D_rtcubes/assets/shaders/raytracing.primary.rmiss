@@ -838,6 +838,15 @@ struct RayPayload {
 		const float T2     = min(_tmax.x, min(_tmax.y, _tmax.z));
 	#define RAY_STARTS_OUTSIDE_T1_T2 (gl_RayTminEXT <= T1 && T1 < gl_RayTmaxEXT && T2 > T1)
 	#define RAY_STARTS_BETWEEN_T1_T2 (T1 <= gl_RayTminEXT && T2 >= gl_RayTminEXT)
+	const float BLOCK_GRID_OFFSET = -0.5; // -0.5 to center blocks on integer grid, starting bottom left of AABB at -0.5 in all axis. 0.0 to align grid with voxel sides starting AABB at 0 in all axis
+	const vec3[6] BOX_NORMAL_DIRS = {
+		vec3(-1,0,0),
+		vec3(0,-1,0),
+		vec3(0,0,-1),
+		vec3(+1,0,0),
+		vec3(0,+1,0),
+		vec3(0,0,+1)
+	};
 #endif
 
 #ifdef SHADER_RCHIT
@@ -853,12 +862,13 @@ struct RayPayload {
 			const float threshold = EPSILON * ray.totalDistanceFromEye * 0.05;\
 			const vec3 absMin = abs(ray.localPosition.xyz - (gl_HitKindEXT == BOX_INTERSECTION_KIND_OUTSIDE_FACE? AABB_MIN.xyz : AABB_MAX.xyz));\
 			const vec3 absMax = abs(ray.localPosition.xyz - (gl_HitKindEXT == BOX_INTERSECTION_KIND_OUTSIDE_FACE? AABB_MAX.xyz : AABB_MIN.xyz));\
-				 if (absMin.x < threshold) {BOX_FACE = 0; BOX_NORMAL.xyz = vec3(-1, 0, 0); BOX_COORD = vec2(ray.localPosition.zy) * vec2(+1,-1) - vec2(0.5); BOX_UV = BOX_COORD / BOX_SIZE.zy;}\
-			else if (absMin.y < threshold) {BOX_FACE = 1; BOX_NORMAL.xyz = vec3( 0,-1, 0); BOX_COORD = vec2(ray.localPosition.xz) * vec2(-1,-1) - vec2(0.5); BOX_UV = BOX_COORD / BOX_SIZE.xz;}\
-			else if (absMin.z < threshold) {BOX_FACE = 2; BOX_NORMAL.xyz = vec3( 0, 0,-1); BOX_COORD = vec2(ray.localPosition.xy) * vec2(-1,-1) - vec2(0.5); BOX_UV = BOX_COORD / BOX_SIZE.xy;}\
-			else if (absMax.x < threshold) {BOX_FACE = 3; BOX_NORMAL.xyz = vec3( 1, 0, 0); BOX_COORD = vec2(ray.localPosition.zy) * vec2(-1,-1) - vec2(0.5); BOX_UV = BOX_COORD / BOX_SIZE.zy;}\
-			else if (absMax.y < threshold) {BOX_FACE = 4; BOX_NORMAL.xyz = vec3( 0, 1, 0); BOX_COORD = vec2(ray.localPosition.xz) * vec2(+1,+1) - vec2(0.5); BOX_UV = BOX_COORD / BOX_SIZE.xz;}\
-			else if (absMax.z < threshold) {BOX_FACE = 5; BOX_NORMAL.xyz = vec3( 0, 0, 1); BOX_COORD = vec2(ray.localPosition.xy) * vec2(+1,-1) - vec2(0.5); BOX_UV = BOX_COORD / BOX_SIZE.xy;}\
+				 if (absMin.x < threshold) {BOX_FACE = 0; BOX_COORD = vec2(ray.localPosition.zy) * vec2(+1,-1) + vec2(BLOCK_GRID_OFFSET); BOX_UV = BOX_COORD / BOX_SIZE.zy;}\
+			else if (absMin.y < threshold) {BOX_FACE = 1; BOX_COORD = vec2(ray.localPosition.xz) * vec2(-1,-1) + vec2(BLOCK_GRID_OFFSET); BOX_UV = BOX_COORD / BOX_SIZE.xz;}\
+			else if (absMin.z < threshold) {BOX_FACE = 2; BOX_COORD = vec2(ray.localPosition.xy) * vec2(-1,-1) + vec2(BLOCK_GRID_OFFSET); BOX_UV = BOX_COORD / BOX_SIZE.xy;}\
+			else if (absMax.x < threshold) {BOX_FACE = 3; BOX_COORD = vec2(ray.localPosition.zy) * vec2(-1,-1) + vec2(BLOCK_GRID_OFFSET); BOX_UV = BOX_COORD / BOX_SIZE.zy;}\
+			else if (absMax.y < threshold) {BOX_FACE = 4; BOX_COORD = vec2(ray.localPosition.xz) * vec2(+1,+1) + vec2(BLOCK_GRID_OFFSET); BOX_UV = BOX_COORD / BOX_SIZE.xz;}\
+			else if (absMax.z < threshold) {BOX_FACE = 5; BOX_COORD = vec2(ray.localPosition.xy) * vec2(+1,-1) + vec2(BLOCK_GRID_OFFSET); BOX_UV = BOX_COORD / BOX_SIZE.xy;}\
+			BOX_NORMAL = BOX_NORMAL_DIRS[BOX_FACE];\
 			ray.normal = normalize(mat3(gl_ObjectToWorldEXT) * BOX_NORMAL);\
 			if (gl_HitKindEXT == BOX_INTERSECTION_KIND_INSIDE_FACE) {\
 				BOX_FACE = (BOX_FACE + 3) % 6;\
@@ -941,7 +951,7 @@ float sdfSphere(vec3 p, float r) {
 
 #ifdef SHADER_RCHIT
 	// Standard Block Lighting stuff
-	#define MAX_ACCUMULATION 1000
+	#define MAX_ACCUMULATION 2000
 	#define ACCUMULATOR_MAX_FRAME_INDEX_DIFF 500
 	#define ACCUMULATOR_MULTIPLIER 3.1415926536
 	#define DIRECT_SUN_LIGHT_MULTIPLIER 3.1415926536
@@ -1281,10 +1291,10 @@ STATIC_ASSERT_ALIGNED16_SIZE(ClientChunkData, 48 + MAX_BLOCKS_PER_CHUNK + MAX_BL
 #endif
 	
 	layout(set = 1, binding = SET1_BINDING_TLAS) uniform accelerationStructureEXT tlas;
-
-	void ApplyStandardBlockLighting(float diffuseMultiplier, float specularMultiplier, float specularPower) {
-		uint seed = InitRandomSeed(InitRandomSeed(gl_LaunchIDEXT.x, gl_LaunchIDEXT.y), uint(camera.frameIndex));
-
+	
+	uint seed = InitRandomSeed(InitRandomSeed(gl_LaunchIDEXT.x, gl_LaunchIDEXT.y), uint(camera.frameIndex));
+	
+	void ApplyAmbientBlockLighting() {
 		const int nbAdjacentSides = 18;
 		const ivec3 adjacentSides[nbAdjacentSides] = {
 			ivec3( 0, 0, 1),
@@ -1306,8 +1316,6 @@ STATIC_ASSERT_ALIGNED16_SIZE(ClientChunkData, 48 + MAX_BLOCKS_PER_CHUNK + MAX_BL
 			ivec3( 1, 0,-1),
 			ivec3( 1,-1, 0),
 		};
-		
-		vec3 albedo = ray.color.rgb;
 		
 		if (OPTION_INDIRECT_LIGHTING) {
 			
@@ -1341,7 +1349,13 @@ STATIC_ASSERT_ALIGNED16_SIZE(ClientChunkData, 48 + MAX_BLOCKS_PER_CHUNK + MAX_BL
 					
 					ClientChunkData(chunkID).lighting.frameIndex[blockIndex] = camera.frameIndex;
 					vec3 l = ClientChunkData(chunkID).lighting.radiance[blockIndex].rgb;
-					ClientChunkData(chunkID).lighting.radiance[blockIndex] = vec4(mix(l, color, 1.0/accumulation), accumulation);
+					// l = pow(l, vec3(1.0 / camera.gamma));
+					l = mix(l, color, 1.0 / accumulation);
+					// l.r = mix(l.r, color.r, 1.0 / (color.r > l.r? accumulation : accumulation/4));
+					// l.g = mix(l.g, color.g, 1.0 / (color.g > l.g? accumulation : accumulation/4));
+					// l.b = mix(l.b, color.b, 1.0 / (color.b > l.b? accumulation : accumulation/4));
+					// l = pow(l, vec3(camera.gamma));
+					ClientChunkData(chunkID).lighting.radiance[blockIndex] = vec4(l, accumulation);
 				
 					for (int i = 0; i < nbAdjacentSides; ++i) {
 						float mixRatio = 0.25;
@@ -1387,7 +1401,13 @@ STATIC_ASSERT_ALIGNED16_SIZE(ClientChunkData, 48 + MAX_BLOCKS_PER_CHUNK + MAX_BL
 										}
 										ClientChunkData(adjacentBlockChunkID).lighting.frameIndex[adjacentBlockIndex] = camera.frameIndex;
 										vec3 l = ClientChunkData(adjacentBlockChunkID).lighting.radiance[adjacentBlockIndex].rgb;
-										ClientChunkData(adjacentBlockChunkID).lighting.radiance[adjacentBlockIndex] = vec4(mix(l, color, mixRatio / accumulation), accumulation);
+										// l = pow(l, vec3(1.0 / camera.gamma));
+										l = mix(l, color, 1.0 / accumulation);
+										// l.r = mix(l.r, color.r, 1.0 / (color.r > l.r? accumulation : accumulation/4));
+										// l.g = mix(l.g, color.g, 1.0 / (color.g > l.g? accumulation : accumulation/4));
+										// l.b = mix(l.b, color.b, 1.0 / (color.b > l.b? accumulation : accumulation/4));
+										// l = pow(l, vec3(camera.gamma));
+										ClientChunkData(adjacentBlockChunkID).lighting.radiance[adjacentBlockIndex] = vec4(l, accumulation);
 									}
 								}
 							}
@@ -1397,7 +1417,7 @@ STATIC_ASSERT_ALIGNED16_SIZE(ClientChunkData, 48 + MAX_BLOCKS_PER_CHUNK + MAX_BL
 			}
 		}
 		
-		{// Apply standard block lighting
+		{// Apply indirect lighting and/or ambient occlusion
 			uint64_t chunkID = VOXEL.extra;
 			ivec3 facingBlockPos = AABB_CENTER_INT + ivec3(round(ray.normal));
 			vec4 lighting = vec4(GetBlockLighting(chunkID, facingBlockPos), 1);
@@ -1439,7 +1459,9 @@ STATIC_ASSERT_ALIGNED16_SIZE(ClientChunkData, 48 + MAX_BLOCKS_PER_CHUNK + MAX_BL
 			}
 			ray.color.rgb *= clamp(lighting.rgb/lighting.a, 0, 1);
 		}
-		
+	}
+
+	void ApplyDirectLighting(in vec3 albedo, in float diffuseMultiplier, in float specularMultiplier, in float specularPower) {
 		if (OPTION_DIRECT_LIGHTING) {
 			if (ray.bounces++ < 4) {// Direct Lighting (must apply this for diffuse materials only)
 				vec3 shadowRayDir = renderer.sunDir;
@@ -1500,6 +1522,9 @@ void main() {
 		ray.color.rgb += ray.color.rgb * pow(smoothstep(0.5, 1, dot(gl_WorldRayDirectionEXT, renderer.sunDir)), 2);
 		ray.color.rgb += ray.color.rgb * pow(smoothstep(1-sunGlowAngle, 1.002, dot(gl_WorldRayDirectionEXT, renderer.sunDir)), 2) * 0.5;
 		ray.color.rgb += ray.color.rgb * smoothstep(1-sunSolidAngle, 1, dot(gl_WorldRayDirectionEXT, renderer.sunDir)) * 100;
+	}
+	if (dot(gl_WorldRayDirectionEXT, vec3(0,1,0)) < 0) {
+		ray.color.rgb *= vec3(0.3);
 	}
 }
 
