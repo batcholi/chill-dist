@@ -91,6 +91,7 @@
 	#define STATIC_ASSERT_ALIGNED16_SIZE(T, X) static_assert(sizeof(T) == X && sizeof(T) % 16 == 0);
 	#define STATIC_ASSERT_SIZE(T, X) static_assert(sizeof(T) == X);
 	#define PUSH_CONSTANT_STRUCT struct
+	#define BUFFER_REFERENCE_FORWARD_DECLARE(TypeName)
 	#define BUFFER_REFERENCE_STRUCT(align) struct
 	#define BUFFER_REFERENCE_STRUCT_READONLY(align) struct
 	#define BUFFER_REFERENCE_STRUCT_WRITEONLY(align) struct
@@ -162,6 +163,7 @@
 	#define STATIC_ASSERT_ALIGNED16_SIZE(T,X)
 	#define STATIC_ASSERT_SIZE(T,X)
 	#define PUSH_CONSTANT_STRUCT layout(push_constant) uniform
+	#define BUFFER_REFERENCE_FORWARD_DECLARE(TypeName) layout(buffer_reference) buffer TypeName;
 	#define BUFFER_REFERENCE_STRUCT(align) layout(buffer_reference, std430, buffer_reference_align = align) buffer
 	#define BUFFER_REFERENCE_STRUCT_READONLY(align) layout(buffer_reference, std430, buffer_reference_align = align) buffer readonly
 	#define BUFFER_REFERENCE_STRUCT_WRITEONLY(align) layout(buffer_reference, std430, buffer_reference_align = align) buffer writeonly
@@ -278,15 +280,15 @@ struct FSRPushConstant {
 };
 STATIC_ASSERT_SIZE(FSRPushConstant, 80)
 
-BUFFER_REFERENCE_STRUCT_READONLY(16) VoxelData {
+BUFFER_REFERENCE_STRUCT_READONLY(16) AabbData {
 	aligned_float32_t aabb[6];
 	aligned_uint64_t extra; // Arbitrary data defined per-shader
 };
-STATIC_ASSERT_ALIGNED16_SIZE(VoxelData, 32)
+STATIC_ASSERT_ALIGNED16_SIZE(AabbData, 32)
 
 BUFFER_REFERENCE_STRUCT_READONLY(16) GeometryData {
 	aligned_uint8_t sbtHandle[32];
-	BUFFER_REFERENCE_ADDR(VoxelData) voxels;
+	BUFFER_REFERENCE_ADDR(AabbData) aabbs;
 	aligned_VkDeviceAddress vertices;
 	aligned_VkDeviceAddress indices32;
 	aligned_VkDeviceAddress indices16;
@@ -648,6 +650,7 @@ vec3 RandomInUnitSphere(inout uint seed) {
 	#define STATIC_ASSERT_ALIGNED16_SIZE(T, X) static_assert(sizeof(T) == X && sizeof(T) % 16 == 0);
 	#define STATIC_ASSERT_SIZE(T, X) static_assert(sizeof(T) == X);
 	#define PUSH_CONSTANT_STRUCT struct
+	#define BUFFER_REFERENCE_FORWARD_DECLARE(TypeName)
 	#define BUFFER_REFERENCE_STRUCT(align) struct
 	#define BUFFER_REFERENCE_STRUCT_READONLY(align) struct
 	#define BUFFER_REFERENCE_STRUCT_WRITEONLY(align) struct
@@ -719,6 +722,7 @@ vec3 RandomInUnitSphere(inout uint seed) {
 	#define STATIC_ASSERT_ALIGNED16_SIZE(T,X)
 	#define STATIC_ASSERT_SIZE(T,X)
 	#define PUSH_CONSTANT_STRUCT layout(push_constant) uniform
+	#define BUFFER_REFERENCE_FORWARD_DECLARE(TypeName) layout(buffer_reference) buffer TypeName;
 	#define BUFFER_REFERENCE_STRUCT(align) layout(buffer_reference, std430, buffer_reference_align = align) buffer
 	#define BUFFER_REFERENCE_STRUCT_READONLY(align) layout(buffer_reference, std430, buffer_reference_align = align) buffer readonly
 	#define BUFFER_REFERENCE_STRUCT_WRITEONLY(align) layout(buffer_reference, std430, buffer_reference_align = align) buffer writeonly
@@ -811,9 +815,9 @@ struct RendererData {
 	#if defined(SHADER_RINT) || defined(SHADER_RCHIT) || defined(SHADER_RAHIT)
 		#define INSTANCE renderer.renderableInstances[gl_InstanceID]
 		#define GEOMETRY INSTANCE.geometries[gl_GeometryIndexEXT*SBT_HITGROUPS_PER_GEOMETRY]
-		#define VOXEL GEOMETRY.voxels[gl_PrimitiveID]
-		#define AABB_MIN vec3(VOXEL.aabb[0], VOXEL.aabb[1], VOXEL.aabb[2])
-		#define AABB_MAX vec3(VOXEL.aabb[3], VOXEL.aabb[4], VOXEL.aabb[5])
+		#define AABB GEOMETRY.aabbs[gl_PrimitiveID]
+		#define AABB_MIN vec3(AABB.aabb[0], AABB.aabb[1], AABB.aabb[2])
+		#define AABB_MAX vec3(AABB.aabb[3], AABB.aabb[4], AABB.aabb[5])
 		#define AABB_CENTER ((AABB_MIN + AABB_MAX) * 0.5)
 		#define AABB_CENTER_INT ivec3(round(AABB_CENTER))
 		#define MODELVIEW (camera.viewMatrix * mat4(gl_ObjectToWorldEXT))
@@ -840,7 +844,7 @@ struct RendererData {
 			const float T2     = min(_tmax.x, min(_tmax.y, _tmax.z));
 		#define RAY_STARTS_OUTSIDE_T1_T2 (gl_RayTminEXT <= T1 && T1 < gl_RayTmaxEXT && T2 > T1)
 		#define RAY_STARTS_BETWEEN_T1_T2 (T1 <= gl_RayTminEXT && T2 >= gl_RayTminEXT)
-		const float BLOCK_GRID_OFFSET = -0.5; // -0.5 to center blocks on integer grid, starting bottom left of AABB at -0.5 in all axis. 0.0 to align grid with voxel sides starting AABB at 0 in all axis
+		const float BLOCK_GRID_OFFSET = -0.5; // -0.5 to center blocks on integer grid
 		const vec3[6] BOX_NORMAL_DIRS = {
 			vec3(-1,0,0),
 			vec3(0,-1,0),
@@ -943,19 +947,8 @@ struct RendererData {
 	float sdfSphere(vec3 p, float r) {
 		return length(p) - r;
 	}
-
-	#ifdef SHADER_RCHIT
-		// Standard Block Lighting stuff
-		#define MAX_ACCUMULATION 1000
-		#define ACCUMULATOR_MAX_FRAME_INDEX_DIFF 500
-		#define ACCUMULATOR_MULTIPLIER 3.1415926536
-		#define DIRECT_SUN_LIGHT_MULTIPLIER 3.1415926536
-		#define SUN_LIGHT_SOLID_ANGLE 0.03
-
-		void ApplyFresnelReflection(float indexOfRefraction) {
-			ray.reflection = Fresnel((camera.viewMatrix * vec4(gl_WorldRayOriginEXT + gl_WorldRayDirectionEXT * ray.hitDistance, 1)).xyz, normalize(WORLD2VIEWNORMAL * ray.normal), indexOfRefraction);
-		}
-		
+	
+	#if defined(SHADER_RCHIT) || defined(SHADER_RINT) || defined(SHADER_RAHIT)
 #ifdef __cplusplus
 
 // Vulkan4D Core Header
@@ -1029,6 +1022,7 @@ struct RendererData {
 	#define STATIC_ASSERT_ALIGNED16_SIZE(T, X) static_assert(sizeof(T) == X && sizeof(T) % 16 == 0);
 	#define STATIC_ASSERT_SIZE(T, X) static_assert(sizeof(T) == X);
 	#define PUSH_CONSTANT_STRUCT struct
+	#define BUFFER_REFERENCE_FORWARD_DECLARE(TypeName)
 	#define BUFFER_REFERENCE_STRUCT(align) struct
 	#define BUFFER_REFERENCE_STRUCT_READONLY(align) struct
 	#define BUFFER_REFERENCE_STRUCT_WRITEONLY(align) struct
@@ -1100,6 +1094,7 @@ struct RendererData {
 	#define STATIC_ASSERT_ALIGNED16_SIZE(T,X)
 	#define STATIC_ASSERT_SIZE(T,X)
 	#define PUSH_CONSTANT_STRUCT layout(push_constant) uniform
+	#define BUFFER_REFERENCE_FORWARD_DECLARE(TypeName) layout(buffer_reference) buffer TypeName;
 	#define BUFFER_REFERENCE_STRUCT(align) layout(buffer_reference, std430, buffer_reference_align = align) buffer
 	#define BUFFER_REFERENCE_STRUCT_READONLY(align) layout(buffer_reference, std430, buffer_reference_align = align) buffer readonly
 	#define BUFFER_REFERENCE_STRUCT_WRITEONLY(align) layout(buffer_reference, std430, buffer_reference_align = align) buffer writeonly
@@ -1107,32 +1102,44 @@ struct RendererData {
 	
 #endif
 
-#define VOXEL_INDEX_BITS_XZ 3 // 3=8x8x1024, 4=16x16x256, 5=32x32x64
+/* 
+TerrainStack (Renderable)
+	a Stack consists of 256 chunks vertically
+	a Chunk contains 8x4x8 = 256 voxels of 1m
+	a Voxel contains 4x4x4 = 64 smaller voxels of 25cm
+*/
 
-#define VOXEL_INDEX_BITS_Y uint16_t(16u - VOXEL_INDEX_BITS_XZ - VOXEL_INDEX_BITS_XZ)
-// VOXELS_* is the TOTAL NUMBER of voxels in that dimension
-#define VOXELS_XZ uint16_t(1u << VOXEL_INDEX_BITS_XZ)
-#define VOXELS_Y uint16_t(1u << VOXEL_INDEX_BITS_Y)
+#define CHUNKS_Y 256
+#define VOXELS_XZ 8
+#define VOXELS_Y 4
+#define VOXEL_GRID_OFFSET -0.5 // -0.5 to put the center of voxels on integer grid
+#define VOXEL_INDEX_BITS_XZ 3
+#define VOXEL_INDEX_TYPE uint8_t
+#define VOXEL_CHUNK_LOD_LIMIT 7 // 0-7
+#define VOXEL_CHUNK_LOD_START_DISTANCE 300
+
+#define VOXEL_CHUNK_LOD_DISTANCE(lod) (uint(VOXEL_CHUNK_LOD_START_DISTANCE) << uint(lod))
+#define VOXEL_STACK_HEIGHT (CHUNKS_Y*VOXELS_Y)
+#define VOXEL_GRID_SIZE_HD 4
 #define VOXELS_X VOXELS_XZ
 #define VOXELS_Z VOXELS_XZ
+#define VOXEL_INDEX_BITS_Y uint8_t(8u - VOXEL_INDEX_BITS_XZ - VOXEL_INDEX_BITS_XZ)
 #define VOXELS_PER_CHUNK (uint32_t(VOXELS_X)*VOXELS_Y*VOXELS_Z)
-
-// up to 8 flags (for now)
-#define VOXEL_FLAG_OPAQUE (1u<<0)
+#define VOXEL_EMPTY 0
+#define VOXEL_FULL 0xfffffffffffffffful
 
 #ifdef __cplusplus // C++
 	union VoxelIndex {
-		uint16_t index;
-		struct Position {
-			uint16_t x : VOXEL_INDEX_BITS_XZ;
-			uint16_t z : VOXEL_INDEX_BITS_XZ;
-			uint16_t y : VOXEL_INDEX_BITS_Y;
-			Position(uint16_t x, uint16_t y, uint16_t z) : x(x), z(z), y(y) {}
-		} pos;
-		VoxelIndex(uint16_t index = 0) : index(index) {
+		VOXEL_INDEX_TYPE index;
+		struct {
+			VOXEL_INDEX_TYPE x : VOXEL_INDEX_BITS_XZ;
+			VOXEL_INDEX_TYPE z : VOXEL_INDEX_BITS_XZ;
+			VOXEL_INDEX_TYPE y : VOXEL_INDEX_BITS_Y;
+		};
+		VoxelIndex(VOXEL_INDEX_TYPE index = 0) noexcept : index(index) {
 			assert(index < VOXELS_PER_CHUNK);
 		}
-		VoxelIndex(const glm::ivec3& p) : pos(p.x, p.y, p.z) {
+		VoxelIndex(const glm::ivec3& p) noexcept : x(p.x), z(p.z), y(p.y) {
 			assert(p.x >= 0);
 			assert(p.z >= 0);
 			assert(p.y >= 0);
@@ -1141,98 +1148,127 @@ struct RendererData {
 			assert(p.y < VOXELS_Y);
 			assert(index < VOXELS_PER_CHUNK);
 		}
-		operator glm::ivec3() const {
-			return {pos.x,pos.y,pos.z};
+		operator glm::ivec3() const noexcept {
+			return {x,y,z};
 		}
-		glm::ivec3 Position() const {
-			return {pos.x,pos.y,pos.z};
+		glm::ivec3 Position() const noexcept {
+			return {x,y,z};
 		}
-		operator uint16_t() const {
+		operator VOXEL_INDEX_TYPE() const noexcept {
 			assert(index < VOXELS_PER_CHUNK);
 			return index;
 		}
-		VoxelIndex operator + (const glm::ivec3& offset) const {
-			glm::ivec3 p = (*this) + offset;
-			return VoxelIndex{p};
+		VoxelIndex operator + (const glm::ivec3& offset) const noexcept {
+			return glm::ivec3{x,y,z} + offset;
+		}
+		bool Continue() {
+			if (index == VOXELS_PER_CHUNK-1) return false;
+			++index;
+			return true;
 		}
 	};
-	STATIC_ASSERT_SIZE(VoxelIndex, 2);
+	STATIC_ASSERT_SIZE(VoxelIndex, sizeof(VOXEL_INDEX_TYPE));
 #else // GLSL
-	#define VoxelIndex(x,y,z) (uint16_t(x) | (uint16_t(z) << VOXEL_INDEX_BITS_XZ) | (uint16_t(y) << (VOXEL_INDEX_BITS_XZ+VOXEL_INDEX_BITS_XZ)))
+	#define VoxelIndex(x,y,z) (VOXEL_INDEX_TYPE(x) | (VOXEL_INDEX_TYPE(z) << VOXEL_INDEX_BITS_XZ) | (VOXEL_INDEX_TYPE(y) << (VOXEL_INDEX_BITS_XZ+VOXEL_INDEX_BITS_XZ)))
+	#define VoxelIndexHD(x,y,z) (uint8_t(x) | (uint8_t(z) << 2) | (uint8_t(y) << 4))
+	#define VoxelFillBitHD(iPos) (1u << VoxelIndexHD(iPos.x, iPos.y, iPos.z))
 #endif
 
 BUFFER_REFERENCE_STRUCT(16) ChunkLightingData {
 	aligned_f32vec4 radiance[VOXELS_PER_CHUNK];
 	aligned_int32_t frameIndex[VOXELS_PER_CHUNK];
 };
-STATIC_ASSERT_ALIGNED16_SIZE(ChunkLightingData, 16*VOXELS_PER_CHUNK + 4*VOXELS_PER_CHUNK);
+STATIC_ASSERT_ALIGNED16_SIZE(ChunkLightingData, (16+4)*VOXELS_PER_CHUNK);
 
+struct Voxel {
+	uint64_t fill;
+	uint16_t type;
+	uint8_t data;
+};
+BUFFER_REFERENCE_STRUCT_READONLY(16) ChunkVoxelData {
+	aligned_uint64_t fill[VOXELS_PER_CHUNK]; // bitfield for 4x4x4 hd voxels
+	aligned_uint16_t type[VOXELS_PER_CHUNK]; // points to a callable shader
+	aligned_uint8_t data[VOXELS_PER_CHUNK]; // arbitrary data for use by callable shader
+	aligned_uint8_t bounds[6];
+	aligned_uint8_t voxelSize;
+	aligned_uint8_t flags; // unused for now
+	aligned_uint64_t extra; // unused for now
+};
+STATIC_ASSERT_ALIGNED16_SIZE(ChunkVoxelData, (8+2+1)*VOXELS_PER_CHUNK + 16);
+
+BUFFER_REFERENCE_FORWARD_DECLARE(ChunkData)
 BUFFER_REFERENCE_STRUCT_READONLY(16) ChunkData {
 	// Adjacent chunkData
-	aligned_VkDeviceAddress plusX;
-	aligned_VkDeviceAddress minusX;
-	aligned_VkDeviceAddress plusZ;
-	aligned_VkDeviceAddress minusZ;
-	// refs
+	BUFFER_REFERENCE_ADDR(ChunkData) plusX;
+	BUFFER_REFERENCE_ADDR(ChunkData) minusX;
+	BUFFER_REFERENCE_ADDR(ChunkData) plusZ;
+	BUFFER_REFERENCE_ADDR(ChunkData) minusZ;
+	BUFFER_REFERENCE_ADDR(ChunkData) plusY;
+	BUFFER_REFERENCE_ADDR(ChunkData) minusY;
+	BUFFER_REFERENCE_ADDR(ChunkVoxelData) voxels;
 	BUFFER_REFERENCE_ADDR(ChunkLightingData) lighting;
-	aligned_VkDeviceAddress extra;
-	// blocks
-	uint16_t type[VOXELS_PER_CHUNK];
-	uint64_t data[VOXELS_PER_CHUNK];
-	uint8_t flags[VOXELS_PER_CHUNK];
 };
-STATIC_ASSERT_ALIGNED16_SIZE(ChunkData, 48 + (2+8+1)*VOXELS_PER_CHUNK);
+STATIC_ASSERT_ALIGNED16_SIZE(ChunkData, 64);
 
 #ifndef __cplusplus // GLSL
-	bool GetVoxel(inout uint64_t chunkID, inout ivec3 pos) {
+	bool GetVoxel(inout uint64_t chunkID, inout ivec3 iPos) {
 		ChunkData chunk = ChunkData(chunkID); // Because of a bug in AMD drivers, we cannot pass the buffer_reference as an argument to a function, instead we pass its address
-		while (pos.x < 0 && chunk.minusX != 0) {
-			chunk = ChunkData(chunk.minusX);
-			pos.x += VOXELS_X;
+		while (iPos.x < 0 && uint64_t(chunk.minusX) != 0) {
+			chunk = chunk.minusX;
+			iPos.x += VOXELS_X;
 		}
-		while (pos.z < 0 && chunk.minusZ != 0) {
-			chunk = ChunkData(chunk.minusZ);
-			pos.z += VOXELS_Z;
+		while (iPos.y < 0 && uint64_t(chunk.minusY) != 0) {
+			chunk = chunk.minusY;
+			iPos.y += VOXELS_Y;
 		}
-		while (pos.x >= VOXELS_X && chunk.plusX != 0) {
-			chunk = ChunkData(chunk.plusX);
-			pos.x -= VOXELS_X;
+		while (iPos.z < 0 && uint64_t(chunk.minusZ) != 0) {
+			chunk = chunk.minusZ;
+			iPos.z += VOXELS_Z;
 		}
-		while (pos.z >= VOXELS_Z && chunk.plusZ != 0) {
-			chunk = ChunkData(chunk.plusZ);
-			pos.z -= VOXELS_Z;
+		while (iPos.x >= VOXELS_X && uint64_t(chunk.plusX) != 0) {
+			chunk = chunk.plusX;
+			iPos.x -= VOXELS_X;
+		}
+		while (iPos.y >= VOXELS_Y && uint64_t(chunk.plusY) != 0) {
+			chunk = chunk.plusY;
+			iPos.y -= VOXELS_Y;
+		}
+		while (iPos.z >= VOXELS_Z && uint64_t(chunk.plusZ) != 0) {
+			chunk = chunk.plusZ;
+			iPos.z -= VOXELS_Z;
 		}
 		chunkID = uint64_t(chunk); // Because of the AMD bug mentioned above...
-		return pos.x >= 0 && pos.y >= 0 && pos.z >= 0 && pos.x < VOXELS_X && pos.y < VOXELS_Y && pos.z < VOXELS_Z;
+		return iPos.x >= 0 && iPos.y >= 0 && iPos.z >= 0 && iPos.x < VOXELS_X && iPos.y < VOXELS_Y && iPos.z < VOXELS_Z;
 	}
-	uint64_t GetVoxelData(inout uint64_t chunkID, inout ivec3 pos) {
-		if (GetVoxel(chunkID, pos)) {
-			return ChunkData(chunkID).data[VoxelIndex(pos.x, pos.y, pos.z)];
-		}
-		return uint64_t(0); // invalid
-	}
-	#if defined(SHADER_RCHIT) || defined(SHADER_RAHIT) || defined(SHADER_RINT)
-		uint64_t GetVoxelData() {
-			ivec3 pos = AABB_CENTER_INT;
-			if (pos.x >= 0 && pos.y >= 0 && pos.z >= 0 && pos.x < VOXELS_X && pos.y < VOXELS_Y && pos.z < VOXELS_Z) {
-				return ChunkData(VOXEL.extra).data[VoxelIndex(pos.x, pos.y, pos.z)];
-			}
-			return uint64_t(0); // invalid
-		}
-	#endif
-	vec3 GetVoxelLighting(inout uint64_t chunkID, inout ivec3 pos) {
-		if (GetVoxel(chunkID, pos)) {
-			int voxelIndex = VoxelIndex(pos.x, pos.y, pos.z);
-			bool isOpaque = (ChunkData(chunkID).flags[voxelIndex] & VOXEL_FLAG_OPAQUE) != 0;
-			if (OPTION_INDIRECT_LIGHTING) {
-				return ChunkData(chunkID).lighting.radiance[voxelIndex].rgb * (!isOpaque?1:0);
-			} else {
-				return vec3(!isOpaque?1:0);
+	vec3 GetVoxelLighting(inout uint64_t chunkID, inout ivec3 iPos) {
+		if (GetVoxel(chunkID, iPos)) {
+			ChunkData chunk = ChunkData(chunkID);
+			if (uint64_t(chunk.voxels) != 0 && uint64_t(chunk.lighting) != 0) {
+				uint8_t voxelIndex = VoxelIndex(iPos.x, iPos.y, iPos.z);
+				bool isOpaque = ChunkData(chunkID).voxels.fill[voxelIndex] != 0;
+				if (OPTION_INDIRECT_LIGHTING) {
+					return ChunkData(chunkID).lighting.radiance[voxelIndex].rgb * (isOpaque?0:1);
+				} else {
+					return vec3(isOpaque?0:1);
+				}
 			}
 		}
 		return vec3(0);
 	}
 #endif
+	#endif
+
+	#ifdef SHADER_RCHIT
+		// Standard Block Lighting stuff
+		#define MAX_ACCUMULATION 1000
+		#define ACCUMULATOR_MAX_FRAME_INDEX_DIFF 500
+		#define ACCUMULATOR_MULTIPLIER 3.1415926536
+		#define DIRECT_SUN_LIGHT_MULTIPLIER 3.1415926536
+		#define SUN_LIGHT_SOLID_ANGLE 0.03
+
+		void ApplyFresnelReflection(float indexOfRefraction) {
+			ray.reflection = Fresnel((camera.viewMatrix * vec4(gl_WorldRayOriginEXT + gl_WorldRayDirectionEXT * ray.hitDistance, 1)).xyz, normalize(WORLD2VIEWNORMAL * ray.normal), indexOfRefraction);
+		}
 		
 		layout(set = 1, binding = SET1_BINDING_TLAS) uniform accelerationStructureEXT tlas;
 		
@@ -1263,7 +1299,7 @@ STATIC_ASSERT_ALIGNED16_SIZE(ChunkData, 48 + (2+8+1)*VOXELS_PER_CHUNK);
 			
 			if (OPTION_INDIRECT_LIGHTING) {
 				
-				// uint64_t chunkID = VOXEL.extra;
+				// uint64_t chunkID = AABB.extra;
 				// ivec3 facingBlockPos = AABB_CENTER_INT + ivec3(round(ray.normal));
 				// if (!GetBlock(chunkID, facingBlockPos)) {
 				// 	return;
@@ -1350,7 +1386,7 @@ STATIC_ASSERT_ALIGNED16_SIZE(ChunkData, 48 + (2+8+1)*VOXELS_PER_CHUNK);
 			}
 			
 			{// Apply indirect lighting and/or ambient occlusion
-				// uint64_t chunkID = VOXEL.extra;
+				// uint64_t chunkID = AABB.extra;
 				// ivec3 facingBlockPos = AABB_CENTER_INT + ivec3(round(ray.normal));
 				// vec4 lighting = vec4(GetBlockLighting(chunkID, facingBlockPos), 1);
 				// for (int i = 0; i < nbAdjacentSides; ++i) {
@@ -1443,100 +1479,101 @@ STATIC_ASSERT_ALIGNED16_SIZE(ChunkData, 48 + (2+8+1)*VOXELS_PER_CHUNK);
 
 /////////////////////////////////////////////////////////////
 
-const vec3 VOXEL_GRID_SIZE = vec3(1024);
-const int VOXEL_GRID_SIZE_HD = 1024;
 
 
-
-layout(buffer_reference, std430, buffer_reference_align = 16) buffer VoxelBuffer {
-	uint8_t data[1024*1024*1024];
-};
-
-bool IsVoxel(ivec3 iPos) {
+bool IsValidVoxel(in ivec3 iPos) {
 	if (iPos.x < 0 || iPos.y < 0 || iPos.z < 0) return false;
-	if (iPos.x >= VOXEL_GRID_SIZE.x || iPos.y >= VOXEL_GRID_SIZE.y || iPos.z >= VOXEL_GRID_SIZE.z) return false;
-	return iPos.x % 2 == 0 && iPos.y % 2 == 0 && iPos.z % 2 == 0;
-	// return VoxelBuffer(VOXEL.extra).data[(uint(iPos.x) | (uint(iPos.y) << 10) | (uint(iPos.z) << 20) )] > 100;
+	if (iPos.x >= VOXELS_X || iPos.y >= VOXELS_Y || iPos.z >= VOXELS_Z) return false;
+	return true;
 }
 
-bool IsHDVoxel(ivec3 iPos) {
-	return iPos.x % 4 == 0 && iPos.y % 4 == 0 && iPos.z % 4 == 0;
+bool IsValidVoxelHD(in ivec3 iPos) {
+	if (iPos.x < 0 || iPos.y < 0 || iPos.z < 0) return false;
+	if (iPos.x >= VOXEL_GRID_SIZE_HD || iPos.y >= VOXEL_GRID_SIZE_HD || iPos.z >= VOXEL_GRID_SIZE_HD) return false;
+	return true;
+}
+
+void NextStepDDA(inout bvec3 bNormalMask, inout ivec3 iPos, inout vec3 travelDist, in ivec3 iStepDir, in vec3 stepSize) {
+	bNormalMask = lessThanEqual(travelDist.xyz, min(travelDist.yzx, travelDist.zxy));
+	iPos += ivec3(bNormalMask) * iStepDir;
+	travelDist += vec3(bNormalMask) * stepSize;
+}
+
+void ReportIntersection(in vec3 pos, in vec3 rayOrigin, in vec3 rayDir, in bvec3 bNormalMask, in ivec3 iStepDir, in float voxelSize) {
+	// Compute actual T
+	const vec3 tmin = min((pos - rayOrigin) / rayDir, (pos + voxelSize - rayOrigin) / rayDir);
+	const float T = max(gl_RayTminEXT, max(tmin.x, max(tmin.y, tmin.z)));
+	// Store Normal Index in gl_HitKindEXT
+	int hitKind = int(bNormalMask.x) * (3 - 3 * max(0, iStepDir.x))
+				+ int(bNormalMask.y) * (4 - 3 * max(0, iStepDir.y))
+				+ int(bNormalMask.z) * (5 - 3 * max(0, iStepDir.z))
+	;
+	reportIntersectionEXT(T, hitKind);
 }
 
 const int maxIterations_hd = VOXEL_GRID_SIZE_HD * 3 + 1;
 
+const float maxHdVoxelDistance = 100;
+
 void main() {
+	if (AABB.extra == 0) return;
+	ChunkData chunk = ChunkData(AABB.extra);
+	if (uint64_t(chunk.voxels) == 0) return;
 	COMPUTE_BOX_INTERSECTION // retrieves T1 and T2
 	if (T1 < gl_RayTmaxEXT && T2 > T1 && T2 > gl_RayTminEXT) {
-		const float startT = max(gl_RayTminEXT, T1 - 0.001);
-		const float endT   = min(gl_RayTmaxEXT, T2 + 0.001);
+		ChunkVoxelData voxelData = chunk.voxels;
+		if (voxelData.voxelSize == 0) return;
+		const float startT = max(gl_RayTminEXT, T1 - EPSILON * voxelData.voxelSize * 10);
+		const float endT   = min(gl_RayTmaxEXT, T2 + EPSILON * voxelData.voxelSize * 10);
+		const bool enableHdVoxels = voxelData.voxelSize == 1 && startT < maxHdVoxelDistance;
 		const int maxIterations = int(ceil(endT - startT)) * 3 + 1;
-		const vec3 rayOrigin = gl_ObjectRayOriginEXT - BLOCK_GRID_OFFSET;
+		const vec3 rayOrigin = gl_ObjectRayOriginEXT - AABB_MIN + vec3(voxelData.bounds[0], voxelData.bounds[1], voxelData.bounds[2]) * voxelData.voxelSize;
 		const vec3 rayDir = gl_ObjectRayDirectionEXT;
-		const vec3 rayPos = rayOrigin + rayDir * startT;
+		const vec3 rayPos = (rayOrigin + rayDir * startT) / voxelData.voxelSize;
 		const vec3 stepSize = abs(1.0 / rayDir);
 		const vec3 stepDir = sign(rayDir);
 		const ivec3 iStepDir = ivec3(stepDir);
-		const ivec3 iOutOfBound = ivec3(rayOrigin + gl_ObjectRayDirectionEXT * endT) + iStepDir;
+		const ivec3 iOutOfBound = ivec3((rayOrigin + gl_ObjectRayDirectionEXT * endT) / voxelData.voxelSize) + iStepDir;
 		
 		bvec3 bNormalMask = bvec3(false);
 		ivec3 iPos = ivec3(floor(rayPos));
 		vec3 travelDist = (stepDir * (vec3(iPos) - rayPos) + (stepDir * 0.5) + 0.5) * stepSize;
-
+		
 		for (int i = 0; i < maxIterations; i++) {
-			if (IsVoxel(iPos)) {
-				if (IsHDVoxel(iPos)) {
-					const vec3 tmin = min((vec3(iPos) - rayOrigin) / rayDir, (vec3(iPos+1) - rayOrigin) / rayDir);
-					const float T = max(gl_RayTminEXT, max(tmin.x, max(tmin.y, tmin.z)));
-					const vec3 rayPos_hd = (rayOrigin + rayDir * T - vec3(iPos)) * VOXEL_GRID_SIZE_HD;
-					
-					bvec3 bNormalMask_hd = bvec3(false);
-					ivec3 iPos_hd = ivec3(floor(rayPos_hd));
-					vec3 travelDist_hd = (stepDir * (vec3(iPos_hd) - rayPos_hd) + (stepDir * 0.5) + 0.5) * stepSize;
-					
-					for (int j = 0; j < maxIterations_hd; j++) {
-						if (iPos_hd.x >= 0 && iPos_hd.y >= 0 && iPos_hd.z >= 0  && iPos_hd.x < VOXEL_GRID_SIZE_HD && iPos_hd.y < VOXEL_GRID_SIZE_HD && iPos_hd.z < VOXEL_GRID_SIZE_HD && iPos_hd.x % 2 == 0 && iPos_hd.y % 2 == 0 && iPos_hd.z % 2 == 0) {
-							// Compute actual T
-							const vec3 tmin_hd = min((vec3(iPos_hd)/VOXEL_GRID_SIZE_HD+vec3(iPos) - rayOrigin) / rayDir, (vec3(iPos_hd+1)/VOXEL_GRID_SIZE_HD+vec3(iPos) - rayOrigin) / rayDir);
-							const float T_hd = max(gl_RayTminEXT, max(tmin_hd.x, max(tmin_hd.y, tmin_hd.z)));
-							// Store Normal Index in gl_HitKindEXT
-							int hitKind = 0
-								+ int(bNormalMask_hd.x) * (3 - 3 * max(0, iStepDir.x))
-								+ int(bNormalMask_hd.y) * (4 - 3 * max(0, iStepDir.y))
-								+ int(bNormalMask_hd.z) * (5 - 3 * max(0, iStepDir.z))
-							;
-							// Report Intersection and stop here
-							reportIntersectionEXT(T_hd, hitKind);
-							return;
+			if (IsValidVoxel(iPos)) {
+				const uint index = VoxelIndex(iPos.x, iPos.y, iPos.z);
+				const uint64_t fill = voxelData.fill[index];
+				if (fill != VOXEL_EMPTY) {
+					if (fill == VOXEL_FULL || !enableHdVoxels) {
+						ReportIntersection(vec3(iPos) * voxelData.voxelSize, rayOrigin, rayDir, bNormalMask, iStepDir, voxelData.voxelSize);
+						return;
+					} else {
+						const vec3 tmin = min((vec3(iPos) - rayOrigin) / rayDir, (vec3(iPos+1) - rayOrigin) / rayDir);
+						const float T = max(gl_RayTminEXT, max(tmin.x, max(tmin.y, tmin.z)));
+						const vec3 rayPos_hd = (rayOrigin + rayDir * T - vec3(iPos)) * VOXEL_GRID_SIZE_HD - vec3(iStepDir)*EPSILON;
+						
+						bvec3 bNormalMask_hd = bvec3(false);
+						ivec3 iPos_hd = ivec3(floor(rayPos_hd));
+						vec3 travelDist_hd = (stepDir * (vec3(iPos_hd) - rayPos_hd) + (stepDir * 0.5) + 0.5) * stepSize;
+						
+						for (int j = 0; j < maxIterations_hd; j++) {
+							if (IsValidVoxelHD(iPos_hd)) {
+								if ((fill & VoxelFillBitHD(iPos_hd)) != 0) {
+									ReportIntersection((vec3(iPos_hd)/VOXEL_GRID_SIZE_HD + vec3(iPos)), rayOrigin, rayDir, bNormalMask_hd, iStepDir, 1.0/VOXEL_GRID_SIZE_HD);
+									return;
+								}
+							}
+							// Fast DDA
+							NextStepDDA(bNormalMask_hd, iPos_hd, travelDist_hd, iStepDir, stepSize);
+							// Early Exit when out of bounds
+							if (iPos_hd.x == VOXEL_GRID_SIZE_HD || iPos_hd.y == VOXEL_GRID_SIZE_HD || iPos_hd.z == VOXEL_GRID_SIZE_HD) break;
 						}
-						// Fast DDA
-						bNormalMask_hd = lessThanEqual(travelDist_hd.xyz, min(travelDist_hd.yzx, travelDist_hd.zxy));
-						travelDist_hd += vec3(bNormalMask_hd) * stepSize;
-						iPos_hd += ivec3(bNormalMask_hd) * iStepDir;
-						// Early Exit?
-						if (iPos_hd.x == VOXEL_GRID_SIZE_HD || iPos_hd.y == VOXEL_GRID_SIZE_HD || iPos_hd.z == VOXEL_GRID_SIZE_HD) break;
 					}
-					
-				} else {
-					// Compute actual T
-					const vec3 tmin = min((vec3(iPos) - rayOrigin) / rayDir, (vec3(iPos+1) - rayOrigin) / rayDir);
-					const float T = max(gl_RayTminEXT, max(tmin.x, max(tmin.y, tmin.z)));
-					// Store Normal Index in gl_HitKindEXT
-					int hitKind = 0
-						+ int(bNormalMask.x) * (3 - 3 * max(0, iStepDir.x))
-						+ int(bNormalMask.y) * (4 - 3 * max(0, iStepDir.y))
-						+ int(bNormalMask.z) * (5 - 3 * max(0, iStepDir.z))
-					;
-					// Report Intersection and stop here
-					reportIntersectionEXT(T, hitKind);
-					return;
 				}
 			}
 			// Fast DDA
-			bNormalMask = lessThanEqual(travelDist.xyz, min(travelDist.yzx, travelDist.zxy));
-			travelDist += vec3(bNormalMask) * stepSize;
-			iPos += ivec3(bNormalMask) * iStepDir;
-			// Early Exit?
+			NextStepDDA(bNormalMask, iPos, travelDist, iStepDir, stepSize);
+			// Early Exit when out of bounds
 			if (iPos.x == iOutOfBound.x || iPos.y == iOutOfBound.y || iPos.z == iOutOfBound.z) return;
 		}
 	}

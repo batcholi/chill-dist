@@ -84,6 +84,7 @@
 	#define STATIC_ASSERT_ALIGNED16_SIZE(T, X) static_assert(sizeof(T) == X && sizeof(T) % 16 == 0);
 	#define STATIC_ASSERT_SIZE(T, X) static_assert(sizeof(T) == X);
 	#define PUSH_CONSTANT_STRUCT struct
+	#define BUFFER_REFERENCE_FORWARD_DECLARE(TypeName)
 	#define BUFFER_REFERENCE_STRUCT(align) struct
 	#define BUFFER_REFERENCE_STRUCT_READONLY(align) struct
 	#define BUFFER_REFERENCE_STRUCT_WRITEONLY(align) struct
@@ -155,6 +156,7 @@
 	#define STATIC_ASSERT_ALIGNED16_SIZE(T,X)
 	#define STATIC_ASSERT_SIZE(T,X)
 	#define PUSH_CONSTANT_STRUCT layout(push_constant) uniform
+	#define BUFFER_REFERENCE_FORWARD_DECLARE(TypeName) layout(buffer_reference) buffer TypeName;
 	#define BUFFER_REFERENCE_STRUCT(align) layout(buffer_reference, std430, buffer_reference_align = align) buffer
 	#define BUFFER_REFERENCE_STRUCT_READONLY(align) layout(buffer_reference, std430, buffer_reference_align = align) buffer readonly
 	#define BUFFER_REFERENCE_STRUCT_WRITEONLY(align) layout(buffer_reference, std430, buffer_reference_align = align) buffer writeonly
@@ -271,15 +273,15 @@ struct FSRPushConstant {
 };
 STATIC_ASSERT_SIZE(FSRPushConstant, 80)
 
-BUFFER_REFERENCE_STRUCT_READONLY(16) VoxelData {
+BUFFER_REFERENCE_STRUCT_READONLY(16) AabbData {
 	aligned_float32_t aabb[6];
 	aligned_uint64_t extra; // Arbitrary data defined per-shader
 };
-STATIC_ASSERT_ALIGNED16_SIZE(VoxelData, 32)
+STATIC_ASSERT_ALIGNED16_SIZE(AabbData, 32)
 
 BUFFER_REFERENCE_STRUCT_READONLY(16) GeometryData {
 	aligned_uint8_t sbtHandle[32];
-	BUFFER_REFERENCE_ADDR(VoxelData) voxels;
+	BUFFER_REFERENCE_ADDR(AabbData) aabbs;
 	aligned_VkDeviceAddress vertices;
 	aligned_VkDeviceAddress indices32;
 	aligned_VkDeviceAddress indices16;
@@ -639,6 +641,7 @@ vec3 RandomInUnitSphere(inout uint seed) {
 	#define STATIC_ASSERT_ALIGNED16_SIZE(T, X) static_assert(sizeof(T) == X && sizeof(T) % 16 == 0);
 	#define STATIC_ASSERT_SIZE(T, X) static_assert(sizeof(T) == X);
 	#define PUSH_CONSTANT_STRUCT struct
+	#define BUFFER_REFERENCE_FORWARD_DECLARE(TypeName)
 	#define BUFFER_REFERENCE_STRUCT(align) struct
 	#define BUFFER_REFERENCE_STRUCT_READONLY(align) struct
 	#define BUFFER_REFERENCE_STRUCT_WRITEONLY(align) struct
@@ -710,6 +713,7 @@ vec3 RandomInUnitSphere(inout uint seed) {
 	#define STATIC_ASSERT_ALIGNED16_SIZE(T,X)
 	#define STATIC_ASSERT_SIZE(T,X)
 	#define PUSH_CONSTANT_STRUCT layout(push_constant) uniform
+	#define BUFFER_REFERENCE_FORWARD_DECLARE(TypeName) layout(buffer_reference) buffer TypeName;
 	#define BUFFER_REFERENCE_STRUCT(align) layout(buffer_reference, std430, buffer_reference_align = align) buffer
 	#define BUFFER_REFERENCE_STRUCT_READONLY(align) layout(buffer_reference, std430, buffer_reference_align = align) buffer readonly
 	#define BUFFER_REFERENCE_STRUCT_WRITEONLY(align) layout(buffer_reference, std430, buffer_reference_align = align) buffer writeonly

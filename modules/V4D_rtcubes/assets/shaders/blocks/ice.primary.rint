@@ -89,6 +89,7 @@
 	#define STATIC_ASSERT_ALIGNED16_SIZE(T, X) static_assert(sizeof(T) == X && sizeof(T) % 16 == 0);
 	#define STATIC_ASSERT_SIZE(T, X) static_assert(sizeof(T) == X);
 	#define PUSH_CONSTANT_STRUCT struct
+	#define BUFFER_REFERENCE_FORWARD_DECLARE(TypeName)
 	#define BUFFER_REFERENCE_STRUCT(align) struct
 	#define BUFFER_REFERENCE_STRUCT_READONLY(align) struct
 	#define BUFFER_REFERENCE_STRUCT_WRITEONLY(align) struct
@@ -160,6 +161,7 @@
 	#define STATIC_ASSERT_ALIGNED16_SIZE(T,X)
 	#define STATIC_ASSERT_SIZE(T,X)
 	#define PUSH_CONSTANT_STRUCT layout(push_constant) uniform
+	#define BUFFER_REFERENCE_FORWARD_DECLARE(TypeName) layout(buffer_reference) buffer TypeName;
 	#define BUFFER_REFERENCE_STRUCT(align) layout(buffer_reference, std430, buffer_reference_align = align) buffer
 	#define BUFFER_REFERENCE_STRUCT_READONLY(align) layout(buffer_reference, std430, buffer_reference_align = align) buffer readonly
 	#define BUFFER_REFERENCE_STRUCT_WRITEONLY(align) layout(buffer_reference, std430, buffer_reference_align = align) buffer writeonly
@@ -276,15 +278,15 @@ struct FSRPushConstant {
 };
 STATIC_ASSERT_SIZE(FSRPushConstant, 80)
 
-BUFFER_REFERENCE_STRUCT_READONLY(16) VoxelData {
+BUFFER_REFERENCE_STRUCT_READONLY(16) AabbData {
 	aligned_float32_t aabb[6];
 	aligned_uint64_t extra; // Arbitrary data defined per-shader
 };
-STATIC_ASSERT_ALIGNED16_SIZE(VoxelData, 32)
+STATIC_ASSERT_ALIGNED16_SIZE(AabbData, 32)
 
 BUFFER_REFERENCE_STRUCT_READONLY(16) GeometryData {
 	aligned_uint8_t sbtHandle[32];
-	BUFFER_REFERENCE_ADDR(VoxelData) voxels;
+	BUFFER_REFERENCE_ADDR(AabbData) aabbs;
 	aligned_VkDeviceAddress vertices;
 	aligned_VkDeviceAddress indices32;
 	aligned_VkDeviceAddress indices16;
@@ -646,6 +648,7 @@ vec3 RandomInUnitSphere(inout uint seed) {
 	#define STATIC_ASSERT_ALIGNED16_SIZE(T, X) static_assert(sizeof(T) == X && sizeof(T) % 16 == 0);
 	#define STATIC_ASSERT_SIZE(T, X) static_assert(sizeof(T) == X);
 	#define PUSH_CONSTANT_STRUCT struct
+	#define BUFFER_REFERENCE_FORWARD_DECLARE(TypeName)
 	#define BUFFER_REFERENCE_STRUCT(align) struct
 	#define BUFFER_REFERENCE_STRUCT_READONLY(align) struct
 	#define BUFFER_REFERENCE_STRUCT_WRITEONLY(align) struct
@@ -717,6 +720,7 @@ vec3 RandomInUnitSphere(inout uint seed) {
 	#define STATIC_ASSERT_ALIGNED16_SIZE(T,X)
 	#define STATIC_ASSERT_SIZE(T,X)
 	#define PUSH_CONSTANT_STRUCT layout(push_constant) uniform
+	#define BUFFER_REFERENCE_FORWARD_DECLARE(TypeName) layout(buffer_reference) buffer TypeName;
 	#define BUFFER_REFERENCE_STRUCT(align) layout(buffer_reference, std430, buffer_reference_align = align) buffer
 	#define BUFFER_REFERENCE_STRUCT_READONLY(align) layout(buffer_reference, std430, buffer_reference_align = align) buffer readonly
 	#define BUFFER_REFERENCE_STRUCT_WRITEONLY(align) layout(buffer_reference, std430, buffer_reference_align = align) buffer writeonly
@@ -809,9 +813,9 @@ struct RayPayload {
 #if defined(SHADER_RINT) || defined(SHADER_RCHIT) || defined(SHADER_RAHIT)
 	#define INSTANCE renderer.renderableInstances[gl_InstanceID]
 	#define GEOMETRY INSTANCE.geometries[gl_GeometryIndexEXT*SBT_HITGROUPS_PER_GEOMETRY]
-	#define VOXEL GEOMETRY.voxels[gl_PrimitiveID]
-	#define AABB_MIN vec3(VOXEL.aabb[0], VOXEL.aabb[1], VOXEL.aabb[2])
-	#define AABB_MAX vec3(VOXEL.aabb[3], VOXEL.aabb[4], VOXEL.aabb[5])
+	#define AABB GEOMETRY.aabbs[gl_PrimitiveID]
+	#define AABB_MIN vec3(AABB.aabb[0], AABB.aabb[1], AABB.aabb[2])
+	#define AABB_MAX vec3(AABB.aabb[3], AABB.aabb[4], AABB.aabb[5])
 	#define AABB_CENTER ((AABB_MIN + AABB_MAX) * 0.5)
 	#define AABB_CENTER_INT ivec3(round(AABB_CENTER))
 	#define MODELVIEW (camera.viewMatrix * mat4(gl_ObjectToWorldEXT))
@@ -1038,6 +1042,7 @@ float sdfSphere(vec3 p, float r) {
 	#define STATIC_ASSERT_ALIGNED16_SIZE(T, X) static_assert(sizeof(T) == X && sizeof(T) % 16 == 0);
 	#define STATIC_ASSERT_SIZE(T, X) static_assert(sizeof(T) == X);
 	#define PUSH_CONSTANT_STRUCT struct
+	#define BUFFER_REFERENCE_FORWARD_DECLARE(TypeName)
 	#define BUFFER_REFERENCE_STRUCT(align) struct
 	#define BUFFER_REFERENCE_STRUCT_READONLY(align) struct
 	#define BUFFER_REFERENCE_STRUCT_WRITEONLY(align) struct
@@ -1109,6 +1114,7 @@ float sdfSphere(vec3 p, float r) {
 	#define STATIC_ASSERT_ALIGNED16_SIZE(T,X)
 	#define STATIC_ASSERT_SIZE(T,X)
 	#define PUSH_CONSTANT_STRUCT layout(push_constant) uniform
+	#define BUFFER_REFERENCE_FORWARD_DECLARE(TypeName) layout(buffer_reference) buffer TypeName;
 	#define BUFFER_REFERENCE_STRUCT(align) layout(buffer_reference, std430, buffer_reference_align = align) buffer
 	#define BUFFER_REFERENCE_STRUCT_READONLY(align) layout(buffer_reference, std430, buffer_reference_align = align) buffer readonly
 	#define BUFFER_REFERENCE_STRUCT_WRITEONLY(align) layout(buffer_reference, std430, buffer_reference_align = align) buffer writeonly
@@ -1211,12 +1217,6 @@ STATIC_ASSERT_SIZE(BlockIndex, 2);
 	};
 	STATIC_ASSERT_SIZE(NetworkBlock, 16);
 	
-	struct Voxel {
-		BlockIndex index;
-		VoxelBlock block;
-		Voxel(BlockIndex index, VoxelBlock block) : index(index), block(block) {}
-	};
-	STATIC_ASSERT_SIZE(Voxel, 8);
 #endif
 
 // For use by GPU for processing of lighting
@@ -1273,7 +1273,7 @@ STATIC_ASSERT_ALIGNED16_SIZE(ClientChunkData, 48 + MAX_BLOCKS_PER_CHUNK + MAX_BL
 		BlockData GetBlockData() {
 			ivec3 pos = AABB_CENTER_INT;
 			if (pos.x >= 0 && pos.y >= 0 && pos.z >= 0 && pos.x < MAX_BLOCK_X && pos.y < MAX_BLOCK_Y && pos.z < MAX_BLOCK_Z) {
-				return ClientChunkData(VOXEL.extra).blockData[BlockIndex(pos.x, pos.y, pos.z)];
+				return ClientChunkData(AABB.extra).blockData[BlockIndex(pos.x, pos.y, pos.z)];
 			}
 			return BlockData(0); // invalid
 		}
@@ -1319,7 +1319,7 @@ STATIC_ASSERT_ALIGNED16_SIZE(ClientChunkData, 48 + MAX_BLOCKS_PER_CHUNK + MAX_BL
 		
 		if (OPTION_INDIRECT_LIGHTING) {
 			
-			uint64_t chunkID = VOXEL.extra;
+			uint64_t chunkID = AABB.extra;
 			ivec3 facingBlockPos = AABB_CENTER_INT + ivec3(round(ray.normal));
 			if (!GetBlock(chunkID, facingBlockPos)) {
 				return;
@@ -1418,7 +1418,7 @@ STATIC_ASSERT_ALIGNED16_SIZE(ClientChunkData, 48 + MAX_BLOCKS_PER_CHUNK + MAX_BL
 		}
 		
 		{// Apply indirect lighting and/or ambient occlusion
-			uint64_t chunkID = VOXEL.extra;
+			uint64_t chunkID = AABB.extra;
 			ivec3 facingBlockPos = AABB_CENTER_INT + ivec3(round(ray.normal));
 			vec4 lighting = vec4(GetBlockLighting(chunkID, facingBlockPos), 1);
 			for (int i = 0; i < nbAdjacentSides; ++i) {
