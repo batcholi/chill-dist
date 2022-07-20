@@ -304,7 +304,7 @@ BUFFER_REFERENCE_STRUCT(16) AimBuffer {
 		uint32_t aimGeometryID;
 	#endif
 	aligned_f32vec3 worldSpaceHitNormal;
-	aligned_uint32_t voxelIndex;
+	aligned_uint32_t aabbIndex;
 	aligned_f32vec3 worldSpacePosition; // MUST COMPENSATE FOR ORIGIN RESET
 	aligned_float32_t hitDistance;
 	aligned_f32vec4 color;

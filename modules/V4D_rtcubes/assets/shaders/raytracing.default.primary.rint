@@ -309,7 +309,7 @@ BUFFER_REFERENCE_STRUCT(16) AimBuffer {
 		uint32_t aimGeometryID;
 	#endif
 	aligned_f32vec3 worldSpaceHitNormal;
-	aligned_uint32_t voxelIndex;
+	aligned_uint32_t aabbIndex;
 	aligned_f32vec3 worldSpacePosition; // MUST COMPENSATE FOR ORIGIN RESET
 	aligned_float32_t hitDistance;
 	aligned_f32vec4 color;
@@ -767,11 +767,12 @@ struct RendererData {
 	BUFFER_REFERENCE_ADDR(TLASInstance) tlasInstances;
 	BUFFER_REFERENCE_ADDR(AimBuffer) aim;
 	aligned_float64_t timestamp;
-	aligned_uint8_t debugChunks;
 	aligned_f32vec3 skyLightColor;
-	aligned_f32vec3 torchLightColor;
-	aligned_f32vec3 sunDir;
 	aligned_uint32_t options;
+	aligned_f32vec3 sunDir;
+	aligned_float32_t wireframeThickness;
+	aligned_f32vec4 wireframeColor;
+	aligned_uint8_t debugChunks;
 	aligned_uint8_t debugMode;
 };
 
@@ -823,7 +824,7 @@ struct RayPayload {
 	#define MVP (camera.projectionMatrix * MODELVIEW)
 	#define MVP_AA (camera.projectionMatrixWithTXAA * MODELVIEW)
 	#define MVP_HISTORY (camera.projectionMatrix * MODELVIEW_HISTORY)
-	#define AIM_GEOMETRY_ID (uint32_t(gl_InstanceCustomIndexEXT) << 12) | uint32_t(gl_GeometryIndexEXT)
+	#define AIM_GEOMETRY_ID ((uint32_t(gl_InstanceCustomIndexEXT) << 12) | uint32_t(gl_GeometryIndexEXT))
 	#define BOX_INTERSECTION_KIND_OUTSIDE_FACE 0
 	#define BOX_INTERSECTION_KIND_INSIDE_FACE 1
 #endif
@@ -903,18 +904,6 @@ struct RayPayload {
 		ray.normal = normalize(mix(-gl_WorldRayDirectionEXT, normalize(cross(-gl_WorldRayDirectionEXT, tmp)), 1.0-bias));\
 	}\
 	ray.normal = DoubleSidedNormals(ray.normal);\
-}
-
-#define CLOSEST_HIT_BOX_AIM_WIREFRAME {\
-	if (renderer.debugChunks != 0 && (renderer.aim.aimGeometryID >> 12) == (ray.index.x >> 12)) {\
-		ray.color.rgb += 0.1;\
-	}\
-	if (renderer.aim.aimGeometryID == ray.index.x && renderer.aim.voxelIndex == ray.index.y) {\
-		vec2 uv = abs(fract(BOX_UV) - 0.5);\
-		float thickness = 0.0018 * max(1, ray.totalDistanceFromEye) / min(min(BOX_SIZE.x,BOX_SIZE.y),BOX_SIZE.z);\
-		float border = smoothstep(0.5-thickness, 0.5, max(uv.x, uv.y));\
-		ray.color.rgb = mix(ray.color.rgb, vec3(0), border);\
-	}\
 }
 
 vec4 GetTexture(in sampler2D tex, in vec2 coords, in float t) {

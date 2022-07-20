@@ -309,7 +309,7 @@ BUFFER_REFERENCE_STRUCT(16) AimBuffer {
 		uint32_t aimGeometryID;
 	#endif
 	aligned_f32vec3 worldSpaceHitNormal;
-	aligned_uint32_t voxelIndex;
+	aligned_uint32_t aabbIndex;
 	aligned_f32vec3 worldSpacePosition; // MUST COMPENSATE FOR ORIGIN RESET
 	aligned_float32_t hitDistance;
 	aligned_f32vec4 color;
@@ -767,11 +767,12 @@ struct RendererData {
 	BUFFER_REFERENCE_ADDR(TLASInstance) tlasInstances;
 	BUFFER_REFERENCE_ADDR(AimBuffer) aim;
 	aligned_float64_t timestamp;
-	aligned_uint8_t debugChunks;
 	aligned_f32vec3 skyLightColor;
-	aligned_f32vec3 torchLightColor;
-	aligned_f32vec3 sunDir;
 	aligned_uint32_t options;
+	aligned_f32vec3 sunDir;
+	aligned_float32_t wireframeThickness;
+	aligned_f32vec4 wireframeColor;
+	aligned_uint8_t debugChunks;
 	aligned_uint8_t debugMode;
 };
 
@@ -823,7 +824,7 @@ struct RayPayload {
 	#define MVP (camera.projectionMatrix * MODELVIEW)
 	#define MVP_AA (camera.projectionMatrixWithTXAA * MODELVIEW)
 	#define MVP_HISTORY (camera.projectionMatrix * MODELVIEW_HISTORY)
-	#define AIM_GEOMETRY_ID (uint32_t(gl_InstanceCustomIndexEXT) << 12) | uint32_t(gl_GeometryIndexEXT)
+	#define AIM_GEOMETRY_ID ((uint32_t(gl_InstanceCustomIndexEXT) << 12) | uint32_t(gl_GeometryIndexEXT))
 	#define BOX_INTERSECTION_KIND_OUTSIDE_FACE 0
 	#define BOX_INTERSECTION_KIND_INSIDE_FACE 1
 #endif
@@ -903,18 +904,6 @@ struct RayPayload {
 		ray.normal = normalize(mix(-gl_WorldRayDirectionEXT, normalize(cross(-gl_WorldRayDirectionEXT, tmp)), 1.0-bias));\
 	}\
 	ray.normal = DoubleSidedNormals(ray.normal);\
-}
-
-#define CLOSEST_HIT_BOX_AIM_WIREFRAME {\
-	if (renderer.debugChunks != 0 && (renderer.aim.aimGeometryID >> 12) == (ray.index.x >> 12)) {\
-		ray.color.rgb += 0.1;\
-	}\
-	if (renderer.aim.aimGeometryID == ray.index.x && renderer.aim.voxelIndex == ray.index.y) {\
-		vec2 uv = abs(fract(BOX_UV) - 0.5);\
-		float thickness = 0.0018 * max(1, ray.totalDistanceFromEye) / min(min(BOX_SIZE.x,BOX_SIZE.y),BOX_SIZE.z);\
-		float border = smoothstep(0.5-thickness, 0.5, max(uv.x, uv.y));\
-		ray.color.rgb = mix(ray.color.rgb, vec3(0), border);\
-	}\
 }
 
 vec4 GetTexture(in sampler2D tex, in vec2 coords, in float t) {
@@ -1119,6 +1108,7 @@ TerrainStack (Renderable)
 #define VOXELS_Y 4
 #define VOXEL_GRID_OFFSET -0.5 // -0.5 to put the center of voxels on integer grid
 #define VOXEL_INDEX_BITS_XZ 3
+#define VOXEL_INDEX_TOTAL_BITS 8
 #define VOXEL_INDEX_TYPE uint8_t
 #define VOXEL_CHUNK_LOD_START_DISTANCE 300
 
@@ -1128,7 +1118,7 @@ TerrainStack (Renderable)
 #define VOXEL_GRID_SIZE_HD 4
 #define VOXELS_X VOXELS_XZ
 #define VOXELS_Z VOXELS_XZ
-#define VOXEL_INDEX_BITS_Y uint8_t(8u - VOXEL_INDEX_BITS_XZ - VOXEL_INDEX_BITS_XZ)
+#define VOXEL_INDEX_BITS_Y VOXEL_INDEX_TYPE(VOXEL_INDEX_TOTAL_BITS - VOXEL_INDEX_BITS_XZ - VOXEL_INDEX_BITS_XZ)
 #define VOXELS_PER_CHUNK (uint32_t(VOXELS_X)*VOXELS_Y*VOXELS_Z)
 #define VOXEL_EMPTY 0
 #define VOXEL_FULL 0xfffffffffffffffful
@@ -1178,6 +1168,11 @@ TerrainStack (Renderable)
 	#define VoxelIndex(x,y,z) (VOXEL_INDEX_TYPE(x) | (VOXEL_INDEX_TYPE(z) << VOXEL_INDEX_BITS_XZ) | (VOXEL_INDEX_TYPE(y) << (VOXEL_INDEX_BITS_XZ+VOXEL_INDEX_BITS_XZ)))
 	#define VoxelIndexHD(x,y,z) (uint8_t(x) | (uint8_t(z) << 2) | (uint8_t(y) << 4))
 	#define VoxelFillBitHD(iPos) (1u << VoxelIndexHD(iPos.x, iPos.y, iPos.z))
+	#define VoxelIndex_iPos(index) ivec3(\
+		(index & ((1u << VOXEL_INDEX_BITS_XZ) - 1)),\
+		((index & (((1u << VOXEL_INDEX_BITS_Y) - 1) << (VOXEL_INDEX_BITS_XZ+VOXEL_INDEX_BITS_XZ))) >> (VOXEL_INDEX_BITS_XZ + VOXEL_INDEX_BITS_XZ)),\
+		((index & (((1u << VOXEL_INDEX_BITS_XZ) - 1) << VOXEL_INDEX_BITS_XZ)) >> VOXEL_INDEX_BITS_XZ)\
+	)
 #endif
 
 BUFFER_REFERENCE_STRUCT(16) ChunkLightingData {
@@ -1190,6 +1185,10 @@ struct Voxel {
 	uint64_t fill;
 	uint16_t type;
 	uint8_t data;
+	#ifdef __cplusplus
+		Voxel(uint64_t fill = 0, uint16_t type = 0, uint8_t data = 0)
+		: fill(fill), type(type), data(data) {}
+	#endif
 };
 BUFFER_REFERENCE_STRUCT_READONLY(16) ChunkVoxelData {
 	aligned_uint64_t fill[VOXELS_PER_CHUNK]; // bitfield for 4x4x4 hd voxels
@@ -1273,7 +1272,7 @@ STATIC_ASSERT_ALIGNED16_SIZE(ChunkData, 64);
 	#define ACCUMULATOR_MAX_FRAME_INDEX_DIFF 500
 	#define ACCUMULATOR_MULTIPLIER 3.1415926536
 	#define DIRECT_SUN_LIGHT_MULTIPLIER 3.1415926536
-	#define SUN_LIGHT_SOLID_ANGLE 0.03
+	#define SUN_LIGHT_SOLID_ANGLE 0.06
 
 	layout(set = 1, binding = SET1_BINDING_TLAS) uniform accelerationStructureEXT tlas;
 	
@@ -1477,45 +1476,76 @@ STATIC_ASSERT_ALIGNED16_SIZE(ChunkData, 64);
 			}
 		}
 	}
+	
+	#define CLOSEST_HIT_BOX_AIM_WIREFRAME {\
+		if (renderer.debugChunks != 0 && (renderer.aim.aimGeometryID >> 12) == (ray.index.x >> 12)) {\
+			ray.color.rgb += 0.2;\
+		}\
+		if (renderer.aim.aimGeometryID == ray.index.x && renderer.aim.aabbIndex == ray.index.y) {\
+			if (ivec3(round(renderer.aim.localPosition - renderer.aim.worldSpaceHitNormal*0.01)) == ivec3(round(ray.localPosition - ray.normal * 0.01))) {\
+				vec2 coord = abs(fract(BOX_COORD) - 0.5);\
+				float thickness = renderer.wireframeThickness * camera.renderScale * max(1, ray.hitDistance);\
+				float border = step(0.5-thickness, max(coord.x, coord.y));\
+				ray.color = mix(ray.color, renderer.wireframeColor, border);\
+			}\
+		}\
+	}
+
 #endif
 
 /////////////////////////////////////////////////////////////
+
+hitAttributeEXT hit {
+	VOXEL_INDEX_TYPE voxelIndex;
+	uint8_t normalIndex;
+};
 
 
 
 void main() {
 	CLOSEST_HIT_BEGIN
-		ray.normal = BOX_NORMAL_DIRS[gl_HitKindEXT];
+		ray.normal = BOX_NORMAL_DIRS[normalIndex];
 		
-		if (OPTION_TEXTURES) {
-			vec2 BOX_COORD;
-			switch (gl_HitKindEXT) {
-				case 0 : BOX_COORD = vec2(ray.localPosition.zy) * vec2(+1,-1) + vec2(VOXEL_GRID_OFFSET);break;
-				case 1 : BOX_COORD = vec2(ray.localPosition.xz) * vec2(-1,-1) + vec2(VOXEL_GRID_OFFSET);break;
-				case 2 : BOX_COORD = vec2(ray.localPosition.xy) * vec2(-1,-1) + vec2(VOXEL_GRID_OFFSET);break;
-				case 3 : BOX_COORD = vec2(ray.localPosition.zy) * vec2(-1,-1) + vec2(VOXEL_GRID_OFFSET);break;
-				case 4 : BOX_COORD = vec2(ray.localPosition.xz) * vec2(+1,+1) + vec2(VOXEL_GRID_OFFSET);break;
-				case 5 : BOX_COORD = vec2(ray.localPosition.xy) * vec2(+1,-1) + vec2(VOXEL_GRID_OFFSET);break;
-			}
+		if (AABB.extra == 0) return;
+		ChunkVoxelData voxelData = ChunkData(AABB.extra).voxels;
+		if (uint64_t(voxelData) == 0) return;
+		
+		const ivec3 iPos = VoxelIndex_iPos(voxelIndex);
+		const vec3 posInVoxel = ray.localPosition - vec3(voxelData.aabbOffset + iPos) * voxelData.voxelSize;
+		// voxelData.data[voxelIndex]
+		// voxelData.fill[voxelIndex]
+		
+		vec3 BOX_SIZE = AABB_MAX - AABB_MIN;
+		vec2 BOX_UV;
+		vec2 BOX_COORD;
+		switch (int(normalIndex)) {
+			case 0 : BOX_COORD = vec2(posInVoxel.zy) * vec2(+1,-1) - vec2(VOXEL_GRID_OFFSET); BOX_UV = BOX_COORD / BOX_SIZE.zy; break;
+			case 1 : BOX_COORD = vec2(posInVoxel.xz) * vec2(-1,-1) - vec2(VOXEL_GRID_OFFSET); BOX_UV = BOX_COORD / BOX_SIZE.xz; break;
+			case 2 : BOX_COORD = vec2(posInVoxel.xy) * vec2(-1,-1) - vec2(VOXEL_GRID_OFFSET); BOX_UV = BOX_COORD / BOX_SIZE.xy; break;
+			case 3 : BOX_COORD = vec2(posInVoxel.zy) * vec2(-1,-1) - vec2(VOXEL_GRID_OFFSET); BOX_UV = BOX_COORD / BOX_SIZE.zy; break;
+			case 4 : BOX_COORD = vec2(posInVoxel.xz) * vec2(+1,+1) - vec2(VOXEL_GRID_OFFSET); BOX_UV = BOX_COORD / BOX_SIZE.xz; break;
+			case 5 : BOX_COORD = vec2(posInVoxel.xy) * vec2(+1,-1) - vec2(VOXEL_GRID_OFFSET); BOX_UV = BOX_COORD / BOX_SIZE.xy; break;
+		}
 
+		if (OPTION_TEXTURES) {
 			// Dirt texture
 			ray.color = ApplyTexture(1, BOX_COORD);
 			
 			// Grass texture
 			// if (GetVoxelData() == 1) {
 				const vec3 grassTint = vec3(0.4, 0.5, 0.25);
-				if (gl_HitKindEXT == 4) {
+				if (normalIndex == 4) {
 					// Top
 					vec4 grass = ApplyTexture(3, BOX_COORD) * vec4(grassTint, 1.0);
 					ray.color = mix(ray.color, grass, grass.a);
-				} else if (gl_HitKindEXT != 1) {
+				} else if (normalIndex != 1) {
 					// Sides
 					vec4 grass = ApplyTexture(2, BOX_COORD) * vec4(grassTint, 1.0);
 					ray.color = mix(ray.color, grass, grass.a);
 				}
 			// }
 		}
-
+		
 		// ApplyFresnelReflection(1.45);
 		
 		vec3 albedo = ray.color.rgb;
@@ -1523,4 +1553,8 @@ void main() {
 		ApplyDirectLighting(albedo, 1.0/*diffuseMultiplier*/, 0.5/*specularMultiplier*/, 10.0/*specularPower*/);
 		
 	CLOSEST_HIT_END
+	CLOSEST_HIT_BOX_AIM_WIREFRAME
+	
+	// ray.color.rgb = normalize(WORLD2VIEWNORMAL * ray.normal);
+	// ray.color.rgb = vec3(BOX_COORD,0);
 }
