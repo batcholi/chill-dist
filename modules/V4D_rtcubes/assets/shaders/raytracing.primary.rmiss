@@ -1,23 +1,31 @@
 #version 460 core
 
+#extension GL_GOOGLE_cpp_style_line_directive : enable
+
 #define _DEBUG
 #define SHADER_RMISS
 #define SHADER_SUBPASS_0
 #define SHADER_OFFSET_0
 
+#line 1 "/home/olivier/projects/chill/src/v4d/modules/V4D_rtcubes/base.glsl"
 #ifndef _RTCUBES_SHADER_BASE_INCLUDED_
 #define _RTCUBES_SHADER_BASE_INCLUDED_
 
 #extension GL_EXT_ray_tracing : require
 #extension GL_EXT_shader_atomic_float : require
 
+#line 1 "/home/olivier/projects/chill/src/v4d/game/graphics/glsl/base.glsl"
 #ifndef _SHADER_BASE_INCLUDED_
 #define _SHADER_BASE_INCLUDED_
 
 #extension GL_EXT_buffer_reference2 : require
 #extension GL_EXT_nonuniform_qualifier : require
 
+#line 1 "/home/olivier/projects/chill/src/v4d/game/graphics/glsl/../cpp_glsl.hh"
+#line 2 "/home/olivier/projects/chill/src/v4d/game/graphics/glsl/../cpp_glsl.hh"
+#line 1 "/home/olivier/projects/chill/src/v4d/core/v4d.h"
 #ifdef __cplusplus
+#line 3 "/home/olivier/projects/chill/src/v4d/core/v4d.h"
 
 // Vulkan4D Core Header
 
@@ -29,6 +37,7 @@
 # include "Core.h"
 
 #endif // __cplusplus
+#line 1 "/home/olivier/projects/chill/src/v4d/core/utilities/graphics/shaders/cpp_glsl_head.hh"
 #ifdef __cplusplus
 
 	// https://github.com/KhronosGroup/GLSL/blob/master/extensions/ext/GL_EXT_shader_explicit_arithmetic_types.txt
@@ -169,6 +178,8 @@
 	#define BUFFER_REFERENCE_ADDR(type) type
 	
 #endif
+#line 15 "/home/olivier/projects/chill/src/v4d/core/v4d.h"
+#line 3 "/home/olivier/projects/chill/src/v4d/game/graphics/glsl/../cpp_glsl.hh"
 #ifdef __cplusplus
 	namespace game::graphics {
 #endif
@@ -319,6 +330,7 @@ STATIC_ASSERT_ALIGNED16_SIZE(AimBuffer, 64)
 #ifdef __cplusplus
 	}
 #endif
+#line 8 "/home/olivier/projects/chill/src/v4d/game/graphics/glsl/base.glsl"
 
 // Set 0
 layout(set = 0, binding = SET0_BINDING_CAMERAS) uniform CameraUniformBuffer {CameraData cameras[MAX_CAMERAS];};
@@ -574,9 +586,14 @@ vec3 RandomInUnitSphere(inout uint seed) {
 
 
 #endif // _SHADER_BASE_INCLUDED_
+#line 8 "/home/olivier/projects/chill/src/v4d/modules/V4D_rtcubes/base.glsl"
+#line 1 "/home/olivier/projects/chill/src/v4d/modules/V4D_rtcubes/cpp_glsl.hh"
 #ifdef __cplusplus
+#line 3 "/home/olivier/projects/chill/src/v4d/modules/V4D_rtcubes/cpp_glsl.hh"
 #endif
+#line 1 "/home/olivier/projects/chill/src/v4d/core/v4d.h"
 #ifdef __cplusplus
+#line 3 "/home/olivier/projects/chill/src/v4d/core/v4d.h"
 
 // Vulkan4D Core Header
 
@@ -588,6 +605,7 @@ vec3 RandomInUnitSphere(inout uint seed) {
 # include "Core.h"
 
 #endif // __cplusplus
+#line 1 "/home/olivier/projects/chill/src/v4d/core/utilities/graphics/shaders/cpp_glsl_head.hh"
 #ifdef __cplusplus
 
 	// https://github.com/KhronosGroup/GLSL/blob/master/extensions/ext/GL_EXT_shader_explicit_arithmetic_types.txt
@@ -728,6 +746,8 @@ vec3 RandomInUnitSphere(inout uint seed) {
 	#define BUFFER_REFERENCE_ADDR(type) type
 	
 #endif
+#line 15 "/home/olivier/projects/chill/src/v4d/core/v4d.h"
+#line 5 "/home/olivier/projects/chill/src/v4d/modules/V4D_rtcubes/cpp_glsl.hh"
 
 /////////////////////
 
@@ -762,20 +782,32 @@ BUFFER_REFERENCE_STRUCT_READONLY(16) TLASInstance {
 };
 STATIC_ASSERT_ALIGNED16_SIZE(TLASInstance, 64)
 
+
+BUFFER_REFERENCE_STRUCT(16) GlobalIllumination {
+	aligned_f32vec4 radiance;
+	aligned_int64_t frameIndex;
+	aligned_int32_t lock;
+	aligned_int32_t _unused;
+};
+STATIC_ASSERT_ALIGNED16_SIZE(GlobalIllumination, 32);
+
 struct RendererData {
 	BUFFER_REFERENCE_ADDR(RenderableInstanceData) renderableInstances;
 	BUFFER_REFERENCE_ADDR(TLASInstance) tlasInstances;
 	BUFFER_REFERENCE_ADDR(AimBuffer) aim;
+	BUFFER_REFERENCE_ADDR(GlobalIllumination) globalIllumination;
 	aligned_float64_t timestamp;
 	aligned_f32vec3 skyLightColor;
 	aligned_uint32_t options;
 	aligned_f32vec3 sunDir;
 	aligned_float32_t wireframeThickness;
 	aligned_f32vec4 wireframeColor;
+	aligned_i32vec3 worldOrigin;
+	aligned_uint32_t globalIlluminationTableCount;
 	aligned_uint8_t debugChunks;
 	aligned_uint8_t debugMode;
 };
-
+#line 9 "/home/olivier/projects/chill/src/v4d/modules/V4D_rtcubes/base.glsl"
 const float EPSILON = 0.00001;
 
 layout(push_constant) uniform PushConstant {
@@ -940,8 +972,10 @@ float sdfSphere(vec3 p, float r) {
 }
 
 #endif // _RTCUBES_SHADER_BASE_INCLUDED_
+#line 2 "/home/olivier/projects/chill/src/v4d/modules/V4D_rtcubes/assets/shaders/raytracing.glsl"
 
 
+#line 116 "/home/olivier/projects/chill/src/v4d/modules/V4D_rtcubes/assets/shaders/raytracing.glsl"
 void main() {
 	ray.hitDistance = -1;
 	ray.reflection = 0;

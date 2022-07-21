@@ -1,23 +1,31 @@
 #version 460 core
 
+#extension GL_GOOGLE_cpp_style_line_directive : enable
+
 #define _DEBUG
 #define SHADER_RINT
 #define SHADER_SUBPASS_0
 #define SHADER_OFFSET_0
 
+#line 1 "/home/olivier/projects/chill/src/v4d/modules/V4D_rtcubes/base.glsl"
 #ifndef _RTCUBES_SHADER_BASE_INCLUDED_
 #define _RTCUBES_SHADER_BASE_INCLUDED_
 
 #extension GL_EXT_ray_tracing : require
 #extension GL_EXT_shader_atomic_float : require
 
+#line 1 "/home/olivier/projects/chill/src/v4d/game/graphics/glsl/base.glsl"
 #ifndef _SHADER_BASE_INCLUDED_
 #define _SHADER_BASE_INCLUDED_
 
 #extension GL_EXT_buffer_reference2 : require
 #extension GL_EXT_nonuniform_qualifier : require
 
+#line 1 "/home/olivier/projects/chill/src/v4d/game/graphics/glsl/../cpp_glsl.hh"
+#line 2 "/home/olivier/projects/chill/src/v4d/game/graphics/glsl/../cpp_glsl.hh"
+#line 1 "/home/olivier/projects/chill/src/v4d/core/v4d.h"
 #ifdef __cplusplus
+#line 3 "/home/olivier/projects/chill/src/v4d/core/v4d.h"
 
 // Vulkan4D Core Header
 
@@ -29,6 +37,7 @@
 # include "Core.h"
 
 #endif // __cplusplus
+#line 1 "/home/olivier/projects/chill/src/v4d/core/utilities/graphics/shaders/cpp_glsl_head.hh"
 #ifdef __cplusplus
 
 	// https://github.com/KhronosGroup/GLSL/blob/master/extensions/ext/GL_EXT_shader_explicit_arithmetic_types.txt
@@ -169,6 +178,8 @@
 	#define BUFFER_REFERENCE_ADDR(type) type
 	
 #endif
+#line 15 "/home/olivier/projects/chill/src/v4d/core/v4d.h"
+#line 3 "/home/olivier/projects/chill/src/v4d/game/graphics/glsl/../cpp_glsl.hh"
 #ifdef __cplusplus
 	namespace game::graphics {
 #endif
@@ -319,6 +330,7 @@ STATIC_ASSERT_ALIGNED16_SIZE(AimBuffer, 64)
 #ifdef __cplusplus
 	}
 #endif
+#line 8 "/home/olivier/projects/chill/src/v4d/game/graphics/glsl/base.glsl"
 
 // Set 0
 layout(set = 0, binding = SET0_BINDING_CAMERAS) uniform CameraUniformBuffer {CameraData cameras[MAX_CAMERAS];};
@@ -574,9 +586,14 @@ vec3 RandomInUnitSphere(inout uint seed) {
 
 
 #endif // _SHADER_BASE_INCLUDED_
+#line 8 "/home/olivier/projects/chill/src/v4d/modules/V4D_rtcubes/base.glsl"
+#line 1 "/home/olivier/projects/chill/src/v4d/modules/V4D_rtcubes/cpp_glsl.hh"
 #ifdef __cplusplus
+#line 3 "/home/olivier/projects/chill/src/v4d/modules/V4D_rtcubes/cpp_glsl.hh"
 #endif
+#line 1 "/home/olivier/projects/chill/src/v4d/core/v4d.h"
 #ifdef __cplusplus
+#line 3 "/home/olivier/projects/chill/src/v4d/core/v4d.h"
 
 // Vulkan4D Core Header
 
@@ -588,6 +605,7 @@ vec3 RandomInUnitSphere(inout uint seed) {
 # include "Core.h"
 
 #endif // __cplusplus
+#line 1 "/home/olivier/projects/chill/src/v4d/core/utilities/graphics/shaders/cpp_glsl_head.hh"
 #ifdef __cplusplus
 
 	// https://github.com/KhronosGroup/GLSL/blob/master/extensions/ext/GL_EXT_shader_explicit_arithmetic_types.txt
@@ -728,6 +746,8 @@ vec3 RandomInUnitSphere(inout uint seed) {
 	#define BUFFER_REFERENCE_ADDR(type) type
 	
 #endif
+#line 15 "/home/olivier/projects/chill/src/v4d/core/v4d.h"
+#line 5 "/home/olivier/projects/chill/src/v4d/modules/V4D_rtcubes/cpp_glsl.hh"
 
 /////////////////////
 
@@ -762,20 +782,32 @@ BUFFER_REFERENCE_STRUCT_READONLY(16) TLASInstance {
 };
 STATIC_ASSERT_ALIGNED16_SIZE(TLASInstance, 64)
 
+
+BUFFER_REFERENCE_STRUCT(16) GlobalIllumination {
+	aligned_f32vec4 radiance;
+	aligned_int64_t frameIndex;
+	aligned_int32_t lock;
+	aligned_int32_t _unused;
+};
+STATIC_ASSERT_ALIGNED16_SIZE(GlobalIllumination, 32);
+
 struct RendererData {
 	BUFFER_REFERENCE_ADDR(RenderableInstanceData) renderableInstances;
 	BUFFER_REFERENCE_ADDR(TLASInstance) tlasInstances;
 	BUFFER_REFERENCE_ADDR(AimBuffer) aim;
+	BUFFER_REFERENCE_ADDR(GlobalIllumination) globalIllumination;
 	aligned_float64_t timestamp;
 	aligned_f32vec3 skyLightColor;
 	aligned_uint32_t options;
 	aligned_f32vec3 sunDir;
 	aligned_float32_t wireframeThickness;
 	aligned_f32vec4 wireframeColor;
+	aligned_i32vec3 worldOrigin;
+	aligned_uint32_t globalIlluminationTableCount;
 	aligned_uint8_t debugChunks;
 	aligned_uint8_t debugMode;
 };
-
+#line 9 "/home/olivier/projects/chill/src/v4d/modules/V4D_rtcubes/base.glsl"
 const float EPSILON = 0.00001;
 
 layout(push_constant) uniform PushConstant {
@@ -940,9 +972,14 @@ float sdfSphere(vec3 p, float r) {
 }
 
 #endif // _RTCUBES_SHADER_BASE_INCLUDED_
+#line 2 "/home/olivier/projects/chill/src/v4d/modules/CHILL_terrain/assets/shaders/voxel.glsl"
 
 #if defined(SHADER_RCHIT) || defined(SHADER_RINT) || defined(SHADER_RAHIT)
+#line 1 "/home/olivier/projects/chill/src/v4d/modules/CHILL_terrain/assets/shaders/voxel.hh"
+#line 2 "/home/olivier/projects/chill/src/v4d/modules/CHILL_terrain/assets/shaders/voxel.hh"
+#line 1 "/home/olivier/projects/chill/src/v4d/core/v4d.h"
 #ifdef __cplusplus
+#line 3 "/home/olivier/projects/chill/src/v4d/core/v4d.h"
 
 // Vulkan4D Core Header
 
@@ -954,6 +991,7 @@ float sdfSphere(vec3 p, float r) {
 # include "Core.h"
 
 #endif // __cplusplus
+#line 1 "/home/olivier/projects/chill/src/v4d/core/utilities/graphics/shaders/cpp_glsl_head.hh"
 #ifdef __cplusplus
 
 	// https://github.com/KhronosGroup/GLSL/blob/master/extensions/ext/GL_EXT_shader_explicit_arithmetic_types.txt
@@ -1094,6 +1132,8 @@ float sdfSphere(vec3 p, float r) {
 	#define BUFFER_REFERENCE_ADDR(type) type
 	
 #endif
+#line 15 "/home/olivier/projects/chill/src/v4d/core/v4d.h"
+#line 3 "/home/olivier/projects/chill/src/v4d/modules/CHILL_terrain/assets/shaders/voxel.hh"
 
 /* 
 TerrainStack (Renderable)
@@ -1181,6 +1221,13 @@ BUFFER_REFERENCE_STRUCT(16) ChunkLightingData {
 };
 STATIC_ASSERT_ALIGNED16_SIZE(ChunkLightingData, (16+4)*VOXELS_PER_CHUNK);
 
+BUFFER_REFERENCE_STRUCT(16) GlobalLightingData {
+	aligned_f32vec4 radiance;
+	aligned_f32vec3 _unused;
+	aligned_int32_t frameIndex;
+};
+STATIC_ASSERT_ALIGNED16_SIZE(GlobalLightingData, 32);
+
 struct Voxel {
 	uint64_t fill;
 	uint16_t type;
@@ -1215,70 +1262,114 @@ BUFFER_REFERENCE_STRUCT_READONLY(16) ChunkData {
 	BUFFER_REFERENCE_ADDR(ChunkData) minusY;
 	BUFFER_REFERENCE_ADDR(ChunkVoxelData) voxels;
 	BUFFER_REFERENCE_ADDR(ChunkLightingData) lighting;
+	BUFFER_REFERENCE_ADDR(GlobalLightingData) globalLighting;
+	aligned_uint64_t _unused;
 };
-STATIC_ASSERT_ALIGNED16_SIZE(ChunkData, 64);
+STATIC_ASSERT_ALIGNED16_SIZE(ChunkData, 80);
 
 #ifndef __cplusplus // GLSL
 	bool GetVoxel(inout uint64_t chunkID, inout ivec3 iPos) {
-		ChunkData chunk = ChunkData(chunkID); // Because of a bug in AMD drivers, we cannot pass the buffer_reference as an argument to a function, instead we pass its address
-		while (iPos.x < 0 && uint64_t(chunk.minusX) != 0) {
-			chunk = chunk.minusX;
-			iPos.x += VOXELS_X;
-		}
-		while (iPos.y < 0 && uint64_t(chunk.minusY) != 0) {
-			chunk = chunk.minusY;
-			iPos.y += VOXELS_Y;
-		}
-		while (iPos.z < 0 && uint64_t(chunk.minusZ) != 0) {
-			chunk = chunk.minusZ;
-			iPos.z += VOXELS_Z;
-		}
-		while (iPos.x >= VOXELS_X && uint64_t(chunk.plusX) != 0) {
-			chunk = chunk.plusX;
-			iPos.x -= VOXELS_X;
-		}
-		while (iPos.y >= VOXELS_Y && uint64_t(chunk.plusY) != 0) {
-			chunk = chunk.plusY;
-			iPos.y -= VOXELS_Y;
-		}
-		while (iPos.z >= VOXELS_Z && uint64_t(chunk.plusZ) != 0) {
-			chunk = chunk.plusZ;
-			iPos.z -= VOXELS_Z;
-		}
-		chunkID = uint64_t(chunk); // Because of the AMD bug mentioned above...
+		// ChunkData chunk = ChunkData(chunkID); // Because of a bug in AMD drivers, we cannot pass the buffer_reference as an argument to a function, instead we pass its address
+		// while (iPos.y < 0 && uint64_t(chunk.minusY) != 0) {
+		// 	chunk = chunk.minusY;
+		// 	iPos.y += VOXELS_Y;
+		// }
+		// while (iPos.y >= VOXELS_Y && uint64_t(chunk.plusY) != 0) {
+		// 	chunk = chunk.plusY;
+		// 	iPos.y -= VOXELS_Y;
+		// }
+		// while (iPos.x < 0 && uint64_t(chunk.minusX) != 0) {
+		// 	chunk = chunk.minusX;
+		// 	iPos.x += VOXELS_X;
+		// }
+		// while (iPos.z < 0 && uint64_t(chunk.minusZ) != 0) {
+		// 	chunk = chunk.minusZ;
+		// 	iPos.z += VOXELS_Z;
+		// }
+		// while (iPos.x >= VOXELS_X && uint64_t(chunk.plusX) != 0) {
+		// 	chunk = chunk.plusX;
+		// 	iPos.x -= VOXELS_X;
+		// }
+		// while (iPos.z >= VOXELS_Z && uint64_t(chunk.plusZ) != 0) {
+		// 	chunk = chunk.plusZ;
+		// 	iPos.z -= VOXELS_Z;
+		// }
+		// chunkID = uint64_t(chunk); // Because of the AMD bug mentioned above...
 		return iPos.x >= 0 && iPos.y >= 0 && iPos.z >= 0 && iPos.x < VOXELS_X && iPos.y < VOXELS_Y && iPos.z < VOXELS_Z;
 	}
-	vec3 GetVoxelLighting(inout uint64_t chunkID, inout ivec3 iPos) {
-		if (GetVoxel(chunkID, iPos)) {
-			ChunkData chunk = ChunkData(chunkID);
-			if (uint64_t(chunk.voxels) != 0 && uint64_t(chunk.lighting) != 0) {
-				uint8_t voxelIndex = VoxelIndex(iPos.x, iPos.y, iPos.z);
-				bool isOpaque = ChunkData(chunkID).voxels.fill[voxelIndex] != 0;
-				if (OPTION_INDIRECT_LIGHTING) {
-					return ChunkData(chunkID).lighting.radiance[voxelIndex].rgb * (isOpaque?0:1);
-				} else {
-					return vec3(isOpaque?0:1);
-				}
-			}
-		}
-		return vec3(0);
-	}
+	// vec3 GetVoxelLighting(inout uint64_t chunkID, inout ivec3 iPos) {
+	// 	if (GetVoxel(chunkID, iPos)) {
+	// 		ChunkData chunk = ChunkData(chunkID);
+	// 		if (uint64_t(chunk.voxels) != 0 && uint64_t(chunk.lighting) != 0) {
+	// 			uint8_t voxelIndex = VoxelIndex(iPos.x, iPos.y, iPos.z);
+	// 			bool isOpaque = chunk.voxels.fill[voxelIndex] > 0;
+	// 			if (OPTION_INDIRECT_LIGHTING) {
+	// 				return vec3(isOpaque?0:1); //chunk.lighting.radiance[voxelIndex].rgb * (isOpaque?0:1);
+	// 			} else {
+	// 				return vec3(isOpaque?0:1);
+	// 			}
+	// 		} else if (uint64_t(chunk.globalLighting) != 0) {
+	// 			return vec3(1); //chunk.globalLighting.radiance.rgb;
+	// 		} else {
+	// 			return vec3(1,0,1); // ERROR
+	// 		}
+	// 	}
+	// 	return vec3(1); // Non-existent
+	// }
 #endif
+#line 5 "/home/olivier/projects/chill/src/v4d/modules/CHILL_terrain/assets/shaders/voxel.glsl"
 #endif
+
+uint HashGlobalPosition(uvec3 data) {
+	uint hash = 8u, tmp;
+
+	hash += data.x & 0xffffu;
+	tmp = (((data.x >> 16) & 0xffffu) << 11) ^ hash;
+	hash = (hash << 16) ^ tmp;
+	hash += hash >> 11;
+
+	hash += data.y & 0xffffu;
+	tmp = (((data.y >> 16) & 0xffffu) << 11) ^ hash;
+	hash = (hash << 16) ^ tmp;
+	hash += hash >> 11;
+
+	hash += data.z & 0xffffu;
+	tmp = (((data.z >> 16) & 0xffffu) << 11) ^ hash;
+	hash = (hash << 16) ^ tmp;
+	hash += hash >> 11;
+
+	hash ^= hash << 3;
+	hash += hash >> 5;
+	hash ^= hash << 4;
+	hash += hash >> 17;
+	hash ^= hash << 25;
+	hash += hash >> 6;
+
+	return hash;
+}
+
+uint GetGiIndex(in ivec3 worldPosition) {
+	return HashGlobalPosition(uvec3(worldPosition + renderer.worldOrigin + ivec3(1<<30))) % renderer.globalIlluminationTableCount;
+}
+
+GlobalIllumination GetGi(uint index) {
+	return renderer.globalIllumination[index];
+}
 
 #ifdef SHADER_RCHIT
 	// Standard Block Lighting stuff
-	#define MAX_ACCUMULATION 1000
+	#define GI_SAMPLES 4
+	#define MAX_ACCUMULATION 500
 	#define ACCUMULATOR_MAX_FRAME_INDEX_DIFF 500
 	#define ACCUMULATOR_MULTIPLIER 3.1415926536
 	#define DIRECT_SUN_LIGHT_MULTIPLIER 3.1415926536
-	#define SUN_LIGHT_SOLID_ANGLE 0.06
+	#define SUN_LIGHT_SOLID_ANGLE 0.03
 
 	layout(set = 1, binding = SET1_BINDING_TLAS) uniform accelerationStructureEXT tlas;
 	
 	uint seed = InitRandomSeed(InitRandomSeed(gl_LaunchIDEXT.x, gl_LaunchIDEXT.y), uint(camera.frameIndex));
 	
-	void ApplyAmbientVoxelLighting() {
+	void ApplyAmbientVoxelLighting(in ivec3 voxelPosInChunk, in vec3 posInVoxel) {
 		const int nbAdjacentSides = 18;
 		const ivec3 adjacentSides[nbAdjacentSides] = {
 			ivec3( 0, 0, 1),
@@ -1301,135 +1392,154 @@ STATIC_ASSERT_ALIGNED16_SIZE(ChunkData, 64);
 			ivec3( 1,-1, 0),
 		};
 		
-		if (OPTION_INDIRECT_LIGHTING) {
-			
-			// uint64_t chunkID = AABB.extra;
-			// ivec3 facingBlockPos = AABB_CENTER_INT + ivec3(round(ray.normal));
-			// if (!GetBlock(chunkID, facingBlockPos)) {
-			// 	return;
-			// }
-			// uint16_t blockIndex = BlockIndex(facingBlockPos.x, facingBlockPos.y, facingBlockPos.z);
-			
-			// if (ray.bounces++ == 0) {
-			// 	float accumulation = atomicExchange(ClientChunkData(chunkID).lighting.radiance[blockIndex].a, -1);
-			// 	if (accumulation != -1) {
-			// 		accumulation = min(accumulation + 1, MAX_ACCUMULATION);
-			// 		if (abs(int(ClientChunkData(chunkID).lighting.frameIndex[blockIndex]) - int(camera.frameIndex)) > ACCUMULATOR_MAX_FRAME_INDEX_DIFF) {
-			// 			accumulation = 1;
-			// 		}
-					
-			// 		RayPayload originalRay = ray;
-			// 		vec3 randomBounceDirection = normalize(RandomInUnitSphere(seed));
-					
-			// 		float nDotR = dot(ray.normal, randomBounceDirection);
-			// 		if (nDotR < 0) {
-			// 			randomBounceDirection *= -1;
-			// 			nDotR *= -1;
-			// 		}
-			// 		ray.hitDistance = 0;
-			// 		traceRayEXT(tlas, 0, RENDERABLE_PRIMARY, 0/*rayType*/, SBT_HITGROUPS_PER_GEOMETRY/*nbRayTypes*/, 0/*missIndex*/, ray.nextPosition, camera.zNear, randomBounceDirection, camera.zFar, RAY_PAYLOAD_PRIMARY);
-			// 		vec3 color = ray.color.rgb * originalRay.color.rgb * ACCUMULATOR_MULTIPLIER * nDotR;
-			// 		ray = originalRay;
-					
-			// 		ClientChunkData(chunkID).lighting.frameIndex[blockIndex] = camera.frameIndex;
-			// 		vec3 l = ClientChunkData(chunkID).lighting.radiance[blockIndex].rgb;
-			// 		ClientChunkData(chunkID).lighting.radiance[blockIndex] = vec4(mix(l, color, 1.0/accumulation), accumulation);
-				
-			// 		for (int i = 0; i < nbAdjacentSides; ++i) {
-			// 			float mixRatio = 0.25;
-			// 			if (dot(vec3(adjacentSides[i]), ray.normal) == 0) {
-			// 				if (abs(adjacentSides[i].x) + abs(adjacentSides[i].y) + abs(adjacentSides[i].z) == 2) {
-			// 					mixRatio *= 0.5;
-			// 					uint diagonalsOccluded = 0;
-			// 					if (adjacentSides[i].x != 0) {
-			// 						ivec3 pos = facingBlockPos + adjacentSides[i] - ivec3(adjacentSides[i].x, 0, 0);
-			// 						uint64_t adjacentBlockChunkID = chunkID;
-			// 						if (GetBlock(adjacentBlockChunkID, pos) && ClientChunkData(adjacentBlockChunkID).occlusion[BlockIndex(pos.x, pos.y, pos.z)] != 0) {
-			// 							diagonalsOccluded++;
-			// 						}
-			// 					}
-			// 					if (adjacentSides[i].y != 0) {
-			// 						ivec3 pos = facingBlockPos + adjacentSides[i] - ivec3(0, adjacentSides[i].y, 0);
-			// 						uint64_t adjacentBlockChunkID = chunkID;
-			// 						if (GetBlock(adjacentBlockChunkID, pos) && ClientChunkData(adjacentBlockChunkID).occlusion[BlockIndex(pos.x, pos.y, pos.z)] != 0) {
-			// 							diagonalsOccluded++;
-			// 						}
-			// 					}
-			// 					if (adjacentSides[i].z != 0) {
-			// 						ivec3 pos = facingBlockPos + adjacentSides[i] - ivec3(0, 0, adjacentSides[i].z);
-			// 						uint64_t adjacentBlockChunkID = chunkID;
-			// 						if (GetBlock(adjacentBlockChunkID, pos) && ClientChunkData(adjacentBlockChunkID).occlusion[BlockIndex(pos.x, pos.y, pos.z)] != 0) {
-			// 							diagonalsOccluded++;
-			// 						}
-			// 					}
-			// 					if (diagonalsOccluded >= 2) {
-			// 						continue;
-			// 					}
-			// 				}
-			// 				ivec3 pos = facingBlockPos + adjacentSides[i];
-			// 				uint64_t adjacentBlockChunkID = chunkID;
-			// 				if (GetBlock(adjacentBlockChunkID, pos)) {
-			// 					uint32_t adjacentBlockIndex = BlockIndex(pos.x, pos.y, pos.z);
-			// 					if (ClientChunkData(adjacentBlockChunkID).occlusion[adjacentBlockIndex] == 0) {
-			// 						float accumulation = atomicExchange(ClientChunkData(adjacentBlockChunkID).lighting.radiance[adjacentBlockIndex].a, -1);
-			// 						if (accumulation != -1) {
-			// 							accumulation = min(accumulation + 1, MAX_ACCUMULATION);
-			// 							if (abs(int(ClientChunkData(adjacentBlockChunkID).lighting.frameIndex[adjacentBlockIndex]) - int(camera.frameIndex)) > ACCUMULATOR_MAX_FRAME_INDEX_DIFF) {
-			// 								accumulation = 1;
-			// 							}
-			// 							ClientChunkData(adjacentBlockChunkID).lighting.frameIndex[adjacentBlockIndex] = camera.frameIndex;
-			// 							vec3 l = ClientChunkData(adjacentBlockChunkID).lighting.radiance[adjacentBlockIndex].rgb;
-			// 							ClientChunkData(adjacentBlockChunkID).lighting.radiance[adjacentBlockIndex] = vec4(mix(l, color, mixRatio / accumulation), accumulation);
-			// 						}
-			// 					}
-			// 				}
-			// 			}
-			// 		}
-			// 	}
-			// }
+		uint64_t chunkID = AABB.extra;
+		
+		{// Set Current Voxel GI Darker if opaque
+			uint giIndex = GetGiIndex(ivec3(round(ray.nextPosition - ray.normal * 0.5)));
+			int lock = atomicExchange(GetGi(giIndex).lock, 1);
+			if (lock == 0) {
+				float accumulation = min(GetGi(giIndex).radiance.a + 1, MAX_ACCUMULATION);
+				if (abs(GetGi(giIndex).frameIndex - int64_t(camera.frameIndex)) > ACCUMULATOR_MAX_FRAME_INDEX_DIFF) {
+					accumulation = 1;
+				}
+				GetGi(giIndex).frameIndex = int64_t(camera.frameIndex);
+				vec3 l = GetGi(giIndex).radiance.rgb;
+				GetGi(giIndex).radiance = vec4(mix(l, vec3(0), 1.0 / accumulation), accumulation);
+				GetGi(giIndex).lock = 0;
+			}
 		}
 		
-		{// Apply indirect lighting and/or ambient occlusion
-			// uint64_t chunkID = AABB.extra;
-			// ivec3 facingBlockPos = AABB_CENTER_INT + ivec3(round(ray.normal));
-			// vec4 lighting = vec4(GetBlockLighting(chunkID, facingBlockPos), 1);
-			// for (int i = 0; i < nbAdjacentSides; ++i) {
-			// 	if (dot(vec3(adjacentSides[i]), ray.normal) == 0) {
-			// 		if (abs(adjacentSides[i].x) + abs(adjacentSides[i].y) + abs(adjacentSides[i].z) == 2) {
-			// 			uint diagonalsOccluded = 0;
-			// 			if (adjacentSides[i].x != 0) {
-			// 				ivec3 pos = facingBlockPos + adjacentSides[i] - ivec3(adjacentSides[i].x, 0, 0);
-			// 				uint64_t adjacentBlockChunkID = chunkID;
-			// 				if (GetBlock(adjacentBlockChunkID, pos) && ClientChunkData(adjacentBlockChunkID).occlusion[BlockIndex(pos.x, pos.y, pos.z)] != 0) {
-			// 					diagonalsOccluded++;
-			// 				}
-			// 			}
-			// 			if (adjacentSides[i].y != 0) {
-			// 				ivec3 pos = facingBlockPos + adjacentSides[i] - ivec3(0, adjacentSides[i].y, 0);
-			// 				uint64_t adjacentBlockChunkID = chunkID;
-			// 				if (GetBlock(adjacentBlockChunkID, pos) && ClientChunkData(adjacentBlockChunkID).occlusion[BlockIndex(pos.x, pos.y, pos.z)] != 0) {
-			// 					diagonalsOccluded++;
-			// 				}
-			// 			}
-			// 			if (adjacentSides[i].z != 0) {
-			// 				ivec3 pos = facingBlockPos + adjacentSides[i] - ivec3(0, 0, adjacentSides[i].z);
-			// 				uint64_t adjacentBlockChunkID = chunkID;
-			// 				if (GetBlock(adjacentBlockChunkID, pos) && ClientChunkData(adjacentBlockChunkID).occlusion[BlockIndex(pos.x, pos.y, pos.z)] != 0) {
-			// 					diagonalsOccluded++;
-			// 				}
-			// 			}
-			// 			if (diagonalsOccluded == 2) {
-			// 				lighting.a++;
-			// 				continue;
-			// 			}
-			// 		}
-			// 		ivec3 adjacentBlockPos = facingBlockPos + adjacentSides[i];
-			// 		uint64_t adjacentBlockChunkID = chunkID;
-			// 		vec3 p = (ray.localPosition - AABB_CENTER) - vec3(adjacentSides[i]);
-			// 		lighting += vec4(GetBlockLighting(adjacentBlockChunkID, adjacentBlockPos) * (1 - clamp(sdfSphere(p, 0.667), 0, 1)), 1);
-			// 	}
-			// }
-			// ray.color.rgb *= clamp(lighting.rgb/lighting.a, 0, 1);
+		ivec3 facingVoxelPos = voxelPosInChunk + ivec3(round(ray.normal));
+		ivec3 facingWorldPos = ivec3(round(ray.nextPosition + ray.normal * 0.5));
+		uint giIndex = GetGiIndex(facingWorldPos);
+		
+		if (OPTION_INDIRECT_LIGHTING) {
+			
+			if (ray.bounces++ == 0) {
+				
+				uint lock = atomicExchange(GetGi(giIndex).lock, 1);
+				if (lock == 0) {
+					
+					float accumulation = min(GetGi(giIndex).radiance.a + 1, MAX_ACCUMULATION);
+					if (abs(GetGi(giIndex).frameIndex - int64_t(camera.frameIndex)) > ACCUMULATOR_MAX_FRAME_INDEX_DIFF) {
+						accumulation = 1;
+					}
+					
+					RayPayload originalRay = ray;
+					vec3 color = vec3(0);
+					
+					for (int i = 0; i < GI_SAMPLES; ++i) {
+						vec3 randomBounceDirection = normalize(RandomInUnitSphere(seed));
+						float nDotR = dot(originalRay.normal, randomBounceDirection);
+						if (nDotR < 0) {
+							randomBounceDirection *= -1;
+							nDotR *= -1;
+						}
+						ray.hitDistance = 0;
+						traceRayEXT(tlas, 0, RENDERABLE_PRIMARY, 0/*rayType*/, SBT_HITGROUPS_PER_GEOMETRY/*nbRayTypes*/, 0/*missIndex*/, originalRay.nextPosition, camera.zNear, randomBounceDirection, camera.zFar, RAY_PAYLOAD_PRIMARY);
+						color += ray.color.rgb * originalRay.color.rgb * ACCUMULATOR_MULTIPLIER / GI_SAMPLES * nDotR;
+					}
+					
+					ray = originalRay;
+					
+					GetGi(giIndex).frameIndex = int64_t(camera.frameIndex);
+					vec3 l = GetGi(giIndex).radiance.rgb;
+					GetGi(giIndex).radiance = vec4(mix(l, color, 1.0/accumulation), accumulation);
+					GetGi(giIndex).lock = 0;
+				
+					for (int i = 0; i < nbAdjacentSides; ++i) {
+						float mixRatio = 0.25;
+						if (dot(vec3(adjacentSides[i]), ray.normal) == 0) {
+							
+							if (abs(adjacentSides[i].x) + abs(adjacentSides[i].y) + abs(adjacentSides[i].z) == 2) {
+								mixRatio *= 0.5;
+								uint diagonalsOccluded = 0;
+								if (adjacentSides[i].x != 0) {
+									ivec3 pos = facingVoxelPos + adjacentSides[i] - ivec3(adjacentSides[i].x, 0, 0);
+									uint64_t adjacentVoxelChunkID = chunkID;
+									if (GetVoxel(adjacentVoxelChunkID, pos) && uint64_t(ChunkData(adjacentVoxelChunkID).voxels) != 0 && ChunkData(adjacentVoxelChunkID).voxels.fill[VoxelIndex(pos.x, pos.y, pos.z)] == VOXEL_FULL) {
+										diagonalsOccluded++;
+									}
+								}
+								if (adjacentSides[i].y != 0) {
+									ivec3 pos = facingVoxelPos + adjacentSides[i] - ivec3(0, adjacentSides[i].y, 0);
+									uint64_t adjacentVoxelChunkID = chunkID;
+									if (GetVoxel(adjacentVoxelChunkID, pos) && uint64_t(ChunkData(adjacentVoxelChunkID).voxels) != 0 && ChunkData(adjacentVoxelChunkID).voxels.fill[VoxelIndex(pos.x, pos.y, pos.z)] == VOXEL_FULL) {
+										diagonalsOccluded++;
+									}
+								}
+								if (adjacentSides[i].z != 0) {
+									ivec3 pos = facingVoxelPos + adjacentSides[i] - ivec3(0, 0, adjacentSides[i].z);
+									uint64_t adjacentVoxelChunkID = chunkID;
+									if (GetVoxel(adjacentVoxelChunkID, pos) && uint64_t(ChunkData(adjacentVoxelChunkID).voxels) != 0 && ChunkData(adjacentVoxelChunkID).voxels.fill[VoxelIndex(pos.x, pos.y, pos.z)] == VOXEL_FULL) {
+										diagonalsOccluded++;
+									}
+								}
+								if (diagonalsOccluded >= 2) {
+									continue;
+								}
+							}
+			
+							uint adjacentGiIndex = GetGiIndex(facingWorldPos + adjacentSides[i]);
+							int lock = atomicExchange(GetGi(adjacentGiIndex).lock, 1);
+							if (lock == 0) {
+								float accumulation = min(GetGi(adjacentGiIndex).radiance.a + 1, MAX_ACCUMULATION);
+								if (abs(GetGi(adjacentGiIndex).frameIndex - int64_t(camera.frameIndex)) > ACCUMULATOR_MAX_FRAME_INDEX_DIFF) {
+									accumulation = 1;
+								}
+								GetGi(adjacentGiIndex).frameIndex = int64_t(camera.frameIndex);
+								vec3 l = GetGi(adjacentGiIndex).radiance.rgb;
+								GetGi(adjacentGiIndex).radiance = vec4(mix(l, color, mixRatio / accumulation), accumulation);
+								GetGi(adjacentGiIndex).lock = 0;
+							}
+						}
+					}
+				}
+			}
+		}
+		
+		if (OPTION_INDIRECT_LIGHTING) {// Apply indirect lighting and/or ambient occlusion
+			ivec3 facingVoxelPos = voxelPosInChunk + ivec3(round(ray.normal));
+			vec4 lighting = vec4(GetGi(giIndex).radiance.rgb, 1);
+			for (int i = 0; i < nbAdjacentSides; ++i) {
+				if (dot(vec3(adjacentSides[i]), ray.normal) == 0) {
+					
+					if (abs(adjacentSides[i].x) + abs(adjacentSides[i].y) + abs(adjacentSides[i].z) == 2) {
+						uint diagonalsOccluded = 0;
+						if (adjacentSides[i].x != 0) {
+							ivec3 pos = facingVoxelPos + adjacentSides[i] - ivec3(adjacentSides[i].x, 0, 0);
+							uint64_t adjacentVoxelChunkID = chunkID;
+							if (GetVoxel(adjacentVoxelChunkID, pos) && uint64_t(ChunkData(adjacentVoxelChunkID).voxels) != 0 && ChunkData(adjacentVoxelChunkID).voxels.fill[VoxelIndex(pos.x, pos.y, pos.z)] == VOXEL_FULL) {
+								diagonalsOccluded++;
+							}
+						}
+						if (adjacentSides[i].y != 0) {
+							ivec3 pos = facingVoxelPos + adjacentSides[i] - ivec3(0, adjacentSides[i].y, 0);
+							uint64_t adjacentVoxelChunkID = chunkID;
+							if (GetVoxel(adjacentVoxelChunkID, pos) && uint64_t(ChunkData(adjacentVoxelChunkID).voxels) != 0 && ChunkData(adjacentVoxelChunkID).voxels.fill[VoxelIndex(pos.x, pos.y, pos.z)] == VOXEL_FULL) {
+								diagonalsOccluded++;
+							}
+						}
+						if (adjacentSides[i].z != 0) {
+							ivec3 pos = facingVoxelPos + adjacentSides[i] - ivec3(0, 0, adjacentSides[i].z);
+							uint64_t adjacentVoxelChunkID = chunkID;
+							if (GetVoxel(adjacentVoxelChunkID, pos) && uint64_t(ChunkData(adjacentVoxelChunkID).voxels) != 0 && ChunkData(adjacentVoxelChunkID).voxels.fill[VoxelIndex(pos.x, pos.y, pos.z)] == VOXEL_FULL) {
+								diagonalsOccluded++;
+							}
+						}
+						if (diagonalsOccluded == 2) {
+							lighting.a++;
+							continue;
+						}
+					}
+					
+					uint adjacentGiIndex = GetGiIndex(facingWorldPos + adjacentSides[i]);
+					uint64_t adjacentVoxelChunkID = chunkID;
+					vec3 p = posInVoxel - vec3(adjacentSides[i]);
+					lighting += vec4(GetGi(adjacentGiIndex).radiance.rgb * (1 - clamp(sdfSphere(p, 0.667), 0, 1)), 1);
+				}
+			}
+			ray.color.rgb *= clamp(lighting.rgb/lighting.a, 0, 1);
 		}
 	}
 
@@ -1477,20 +1587,6 @@ STATIC_ASSERT_ALIGNED16_SIZE(ChunkData, 64);
 		}
 	}
 	
-	#define CLOSEST_HIT_BOX_AIM_WIREFRAME {\
-		if (renderer.debugChunks != 0 && (renderer.aim.aimGeometryID >> 12) == (ray.index.x >> 12)) {\
-			ray.color.rgb += 0.2;\
-		}\
-		if (renderer.aim.aimGeometryID == ray.index.x && renderer.aim.aabbIndex == ray.index.y) {\
-			if (ivec3(round(renderer.aim.localPosition - renderer.aim.worldSpaceHitNormal*0.01)) == ivec3(round(ray.localPosition - ray.normal * 0.01))) {\
-				vec2 coord = abs(fract(BOX_COORD) - 0.5);\
-				float thickness = renderer.wireframeThickness * camera.renderScale * max(1, ray.hitDistance);\
-				float border = step(0.5-thickness, max(coord.x, coord.y));\
-				ray.color = mix(ray.color, renderer.wireframeColor, border);\
-			}\
-		}\
-	}
-
 #endif
 
 /////////////////////////////////////////////////////////////
@@ -1501,6 +1597,7 @@ hitAttributeEXT hit {
 };
 
 
+#line 284 "/home/olivier/projects/chill/src/v4d/modules/CHILL_terrain/assets/shaders/voxel.glsl"
 
 bool IsValidVoxel(in ivec3 iPos, in vec3 gridOffset) {
 	if (iPos.x < 0 || iPos.y < 0 || iPos.z < 0) return false;

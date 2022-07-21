@@ -1,17 +1,24 @@
 #version 460 core
 
+#extension GL_GOOGLE_cpp_style_line_directive : enable
+
 #define _DEBUG
 #define SHADER_FRAG
 #define SHADER_SUBPASS_0
 #define SHADER_OFFSET_0
 
+#line 1 "/home/olivier/projects/chill/src/v4d/game/graphics/glsl/base.glsl"
 #ifndef _SHADER_BASE_INCLUDED_
 #define _SHADER_BASE_INCLUDED_
 
 #extension GL_EXT_buffer_reference2 : require
 #extension GL_EXT_nonuniform_qualifier : require
 
+#line 1 "/home/olivier/projects/chill/src/v4d/game/graphics/glsl/../cpp_glsl.hh"
+#line 2 "/home/olivier/projects/chill/src/v4d/game/graphics/glsl/../cpp_glsl.hh"
+#line 1 "/home/olivier/projects/chill/src/v4d/core/v4d.h"
 #ifdef __cplusplus
+#line 3 "/home/olivier/projects/chill/src/v4d/core/v4d.h"
 
 // Vulkan4D Core Header
 
@@ -23,6 +30,7 @@
 # include "Core.h"
 
 #endif // __cplusplus
+#line 1 "/home/olivier/projects/chill/src/v4d/core/utilities/graphics/shaders/cpp_glsl_head.hh"
 #ifdef __cplusplus
 
 	// https://github.com/KhronosGroup/GLSL/blob/master/extensions/ext/GL_EXT_shader_explicit_arithmetic_types.txt
@@ -163,6 +171,8 @@
 	#define BUFFER_REFERENCE_ADDR(type) type
 	
 #endif
+#line 15 "/home/olivier/projects/chill/src/v4d/core/v4d.h"
+#line 3 "/home/olivier/projects/chill/src/v4d/game/graphics/glsl/../cpp_glsl.hh"
 #ifdef __cplusplus
 	namespace game::graphics {
 #endif
@@ -313,6 +323,7 @@ STATIC_ASSERT_ALIGNED16_SIZE(AimBuffer, 64)
 #ifdef __cplusplus
 	}
 #endif
+#line 8 "/home/olivier/projects/chill/src/v4d/game/graphics/glsl/base.glsl"
 
 // Set 0
 layout(set = 0, binding = SET0_BINDING_CAMERAS) uniform CameraUniformBuffer {CameraData cameras[MAX_CAMERAS];};
@@ -568,7 +579,12 @@ vec3 RandomInUnitSphere(inout uint seed) {
 
 
 #endif // _SHADER_BASE_INCLUDED_
+#line 2 "/home/olivier/projects/chill/src/v4d/game/assets/shaders/ui/text.glsl"
+#line 1 "/home/olivier/projects/chill/src/v4d/game/graphics/ui/text_glsl.hh"
+#line 2 "/home/olivier/projects/chill/src/v4d/game/graphics/ui/text_glsl.hh"
+#line 1 "/home/olivier/projects/chill/src/v4d/core/v4d.h"
 #ifdef __cplusplus
+#line 3 "/home/olivier/projects/chill/src/v4d/core/v4d.h"
 
 // Vulkan4D Core Header
 
@@ -580,6 +596,7 @@ vec3 RandomInUnitSphere(inout uint seed) {
 # include "Core.h"
 
 #endif // __cplusplus
+#line 1 "/home/olivier/projects/chill/src/v4d/core/utilities/graphics/shaders/cpp_glsl_head.hh"
 #ifdef __cplusplus
 
 	// https://github.com/KhronosGroup/GLSL/blob/master/extensions/ext/GL_EXT_shader_explicit_arithmetic_types.txt
@@ -720,6 +737,8 @@ vec3 RandomInUnitSphere(inout uint seed) {
 	#define BUFFER_REFERENCE_ADDR(type) type
 	
 #endif
+#line 15 "/home/olivier/projects/chill/src/v4d/core/v4d.h"
+#line 3 "/home/olivier/projects/chill/src/v4d/game/graphics/ui/text_glsl.hh"
 
 #define UI_TEXT_MAX_LENGTH 92
 
@@ -737,8 +756,10 @@ PUSH_CONSTANT_STRUCT UiElementTextPushConstant {
 	aligned_uint32_t text[UI_TEXT_MAX_LENGTH/4];
 };
 STATIC_ASSERT_ALIGNED16_SIZE(UiElementTextPushConstant, 128)
+#line 3 "/home/olivier/projects/chill/src/v4d/game/assets/shaders/ui/text.glsl"
 
 
+#line 17 "/home/olivier/projects/chill/src/v4d/game/assets/shaders/ui/text.glsl"
 
 layout(location = 0) in flat uint in_char;
 layout(location = 0) out vec4 out_color;
