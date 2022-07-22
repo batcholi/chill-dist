@@ -13,6 +13,7 @@
 
 #extension GL_EXT_ray_tracing : require
 #extension GL_EXT_shader_atomic_float : require
+#extension GL_ARB_shader_clock : enable
 
 #line 1 "/home/olivier/projects/chill/src/v4d/game/graphics/glsl/base.glsl"
 #ifndef _SHADER_BASE_INCLUDED_
@@ -197,7 +198,8 @@
 #define SET0_BINDING_SAMPLER_RESOLVED 10
 #define SET0_BINDING_IMG_POST 11
 #define SET0_BINDING_SAMPLER_POST 12
-#define SET0_BINDING_TEXTURES 13
+#define SET0_BINDING_IMG_DEBUG 13
+#define SET0_BINDING_TEXTURES 14
 
 #define SET1_BINDING_INOUT_IMG_RESOLVED 0
 #define SET1_BINDING_IN_IMG_OVERLAY 1
@@ -324,8 +326,10 @@ BUFFER_REFERENCE_STRUCT(16) AimBuffer {
 	aligned_f32vec3 worldSpacePosition; // MUST COMPENSATE FOR ORIGIN RESET
 	aligned_float32_t hitDistance;
 	aligned_f32vec4 color;
+	aligned_f32vec3 viewSpaceHitNormal;
+	aligned_uint32_t tlasInstanceIndex;
 };
-STATIC_ASSERT_ALIGNED16_SIZE(AimBuffer, 64)
+STATIC_ASSERT_ALIGNED16_SIZE(AimBuffer, 80)
 
 #ifdef __cplusplus
 	}
@@ -346,6 +350,7 @@ layout(set = 0, binding = SET0_BINDING_IMG_RESOLVED, rgba32f) uniform image2D im
 layout(set = 0, binding = SET0_BINDING_SAMPLER_RESOLVED) uniform sampler2D sampler_resolved;
 layout(set = 0, binding = SET0_BINDING_IMG_POST, rgba8) uniform image2D img_post;
 layout(set = 0, binding = SET0_BINDING_SAMPLER_POST) uniform sampler2D sampler_post;
+layout(set = 0, binding = SET0_BINDING_IMG_DEBUG, rgba32f) uniform image2D img_debug;
 layout(set = 0, binding = SET0_BINDING_TEXTURES) uniform sampler2D textures[];
 
 CameraData camera = cameras[0];
@@ -586,7 +591,7 @@ vec3 RandomInUnitSphere(inout uint seed) {
 
 
 #endif // _SHADER_BASE_INCLUDED_
-#line 8 "/home/olivier/projects/chill/src/v4d/modules/V4D_rtcubes/base.glsl"
+#line 9 "/home/olivier/projects/chill/src/v4d/modules/V4D_rtcubes/base.glsl"
 #line 1 "/home/olivier/projects/chill/src/v4d/modules/V4D_rtcubes/cpp_glsl.hh"
 #ifdef __cplusplus
 #line 3 "/home/olivier/projects/chill/src/v4d/modules/V4D_rtcubes/cpp_glsl.hh"
@@ -765,6 +770,19 @@ vec3 RandomInUnitSphere(inout uint seed) {
 
 #define RENDERER_DEBUG_MODE_NONE 0
 #define RENDERER_DEBUG_MODE_RAYGEN_TIME 1
+#define RENDERER_DEBUG_MODE_RAYHIT_TIME 2
+#define RENDERER_DEBUG_MODE_RAYINT_TIME 3
+#define RENDERER_DEBUG_MODE_TRACE_RAY_COUNT 4
+#define RENDERER_DEBUG_MODE_NORMALS 5
+#define RENDERER_DEBUG_MODE_MOTION 6
+#define RENDERER_DEBUG_MODE_DISTANCE 7
+#define RENDERER_DEBUG_MODE_UVS 8
+#define RENDERER_DEBUG_MODE_FEFLECTIVITY 9
+#define RENDERER_DEBUG_MODE_TRANSPARENCY 10
+#define RENDERER_DEBUG_MODE_AIM_RENDERABLE 11
+#define RENDERER_DEBUG_MODE_AIM_GEOMETRY 12
+#define RENDERER_DEBUG_MODE_AIM_PRIMITIVE 13
+#define RENDERER_DEBUG_MODE_GLOBAL_ILLUMINATION 14
 
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////
 // Structs and Buffer References -- Must use aligned_* explicit arithmetic types (or VkDeviceAddress as an uint64_t, or BUFFER_REFERENCE_ADDR(StructType))
@@ -805,9 +823,8 @@ struct RendererData {
 	aligned_i32vec3 worldOrigin;
 	aligned_uint32_t globalIlluminationTableCount;
 	aligned_uint8_t debugChunks;
-	aligned_uint8_t debugMode;
 };
-#line 9 "/home/olivier/projects/chill/src/v4d/modules/V4D_rtcubes/base.glsl"
+#line 10 "/home/olivier/projects/chill/src/v4d/modules/V4D_rtcubes/base.glsl"
 const float EPSILON = 0.00001;
 
 layout(push_constant) uniform PushConstant {
@@ -936,6 +953,7 @@ struct RayPayload {
 		ray.normal = normalize(mix(-gl_WorldRayDirectionEXT, normalize(cross(-gl_WorldRayDirectionEXT, tmp)), 1.0-bias));\
 	}\
 	ray.normal = DoubleSidedNormals(ray.normal);\
+	if (ray.bounces == 0 && camera.debugViewMode == RENDERER_DEBUG_MODE_RAYHIT_TIME) WRITE_DEBUG_TIME\
 }
 
 vec4 GetTexture(in sampler2D tex, in vec2 coords, in float t) {
@@ -970,6 +988,46 @@ float sdfCube(vec3 p, float r) {
 float sdfSphere(vec3 p, float r) {
 	return length(p) - r;
 }
+
+// Global Illumination
+uint HashGlobalPosition(uvec3 data) {
+	uint hash = 8u, tmp;
+
+	hash += data.x & 0xffffu;
+	tmp = (((data.x >> 16) & 0xffffu) << 11) ^ hash;
+	hash = (hash << 16) ^ tmp;
+	hash += hash >> 11;
+
+	hash += data.y & 0xffffu;
+	tmp = (((data.y >> 16) & 0xffffu) << 11) ^ hash;
+	hash = (hash << 16) ^ tmp;
+	hash += hash >> 11;
+
+	hash += data.z & 0xffffu;
+	tmp = (((data.z >> 16) & 0xffffu) << 11) ^ hash;
+	hash = (hash << 16) ^ tmp;
+	hash += hash >> 11;
+
+	hash ^= hash << 3;
+	hash += hash >> 5;
+	hash ^= hash << 4;
+	hash += hash >> 17;
+	hash ^= hash << 25;
+	hash += hash >> 6;
+
+	return hash;
+}
+uint GetGiIndex(in ivec3 worldPosition) {
+	return HashGlobalPosition(uvec3(worldPosition + renderer.worldOrigin + ivec3(1<<30))) % renderer.globalIlluminationTableCount;
+}
+GlobalIllumination GetGi(uint index) {
+	return renderer.globalIllumination[index];
+}
+
+// Debug Stuff
+uint64_t startTime = clockARB();
+#define WRITE_DEBUG_TIME {imageStore(img_debug, ivec2(gl_LaunchIDEXT.xy), vec4(Heatmap(float(double(clockARB() - startTime) / double(500000.0))), 1));}
+#define traceRayEXT {if (camera.debugViewMode == RENDERER_DEBUG_MODE_TRACE_RAY_COUNT) imageStore(img_debug, ivec2(gl_LaunchIDEXT.xy), vec4(0,0,0, imageLoad(img_debug, ivec2(gl_LaunchIDEXT.xy)).a + 1));} traceRayEXT
 
 #endif // _RTCUBES_SHADER_BASE_INCLUDED_
 #line 2 "/home/olivier/projects/chill/src/v4d/modules/V4D_rtcubes/assets/shaders/avatar.glsl"

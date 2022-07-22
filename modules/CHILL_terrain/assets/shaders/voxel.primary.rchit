@@ -13,6 +13,7 @@
 
 #extension GL_EXT_ray_tracing : require
 #extension GL_EXT_shader_atomic_float : require
+#extension GL_ARB_shader_clock : enable
 
 #line 1 "/home/olivier/projects/chill/src/v4d/game/graphics/glsl/base.glsl"
 #ifndef _SHADER_BASE_INCLUDED_
@@ -197,7 +198,8 @@
 #define SET0_BINDING_SAMPLER_RESOLVED 10
 #define SET0_BINDING_IMG_POST 11
 #define SET0_BINDING_SAMPLER_POST 12
-#define SET0_BINDING_TEXTURES 13
+#define SET0_BINDING_IMG_DEBUG 13
+#define SET0_BINDING_TEXTURES 14
 
 #define SET1_BINDING_INOUT_IMG_RESOLVED 0
 #define SET1_BINDING_IN_IMG_OVERLAY 1
@@ -324,8 +326,10 @@ BUFFER_REFERENCE_STRUCT(16) AimBuffer {
 	aligned_f32vec3 worldSpacePosition; // MUST COMPENSATE FOR ORIGIN RESET
 	aligned_float32_t hitDistance;
 	aligned_f32vec4 color;
+	aligned_f32vec3 viewSpaceHitNormal;
+	aligned_uint32_t tlasInstanceIndex;
 };
-STATIC_ASSERT_ALIGNED16_SIZE(AimBuffer, 64)
+STATIC_ASSERT_ALIGNED16_SIZE(AimBuffer, 80)
 
 #ifdef __cplusplus
 	}
@@ -346,6 +350,7 @@ layout(set = 0, binding = SET0_BINDING_IMG_RESOLVED, rgba32f) uniform image2D im
 layout(set = 0, binding = SET0_BINDING_SAMPLER_RESOLVED) uniform sampler2D sampler_resolved;
 layout(set = 0, binding = SET0_BINDING_IMG_POST, rgba8) uniform image2D img_post;
 layout(set = 0, binding = SET0_BINDING_SAMPLER_POST) uniform sampler2D sampler_post;
+layout(set = 0, binding = SET0_BINDING_IMG_DEBUG, rgba32f) uniform image2D img_debug;
 layout(set = 0, binding = SET0_BINDING_TEXTURES) uniform sampler2D textures[];
 
 CameraData camera = cameras[0];
@@ -586,7 +591,7 @@ vec3 RandomInUnitSphere(inout uint seed) {
 
 
 #endif // _SHADER_BASE_INCLUDED_
-#line 8 "/home/olivier/projects/chill/src/v4d/modules/V4D_rtcubes/base.glsl"
+#line 9 "/home/olivier/projects/chill/src/v4d/modules/V4D_rtcubes/base.glsl"
 #line 1 "/home/olivier/projects/chill/src/v4d/modules/V4D_rtcubes/cpp_glsl.hh"
 #ifdef __cplusplus
 #line 3 "/home/olivier/projects/chill/src/v4d/modules/V4D_rtcubes/cpp_glsl.hh"
@@ -765,6 +770,19 @@ vec3 RandomInUnitSphere(inout uint seed) {
 
 #define RENDERER_DEBUG_MODE_NONE 0
 #define RENDERER_DEBUG_MODE_RAYGEN_TIME 1
+#define RENDERER_DEBUG_MODE_RAYHIT_TIME 2
+#define RENDERER_DEBUG_MODE_RAYINT_TIME 3
+#define RENDERER_DEBUG_MODE_TRACE_RAY_COUNT 4
+#define RENDERER_DEBUG_MODE_NORMALS 5
+#define RENDERER_DEBUG_MODE_MOTION 6
+#define RENDERER_DEBUG_MODE_DISTANCE 7
+#define RENDERER_DEBUG_MODE_UVS 8
+#define RENDERER_DEBUG_MODE_FEFLECTIVITY 9
+#define RENDERER_DEBUG_MODE_TRANSPARENCY 10
+#define RENDERER_DEBUG_MODE_AIM_RENDERABLE 11
+#define RENDERER_DEBUG_MODE_AIM_GEOMETRY 12
+#define RENDERER_DEBUG_MODE_AIM_PRIMITIVE 13
+#define RENDERER_DEBUG_MODE_GLOBAL_ILLUMINATION 14
 
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////
 // Structs and Buffer References -- Must use aligned_* explicit arithmetic types (or VkDeviceAddress as an uint64_t, or BUFFER_REFERENCE_ADDR(StructType))
@@ -805,9 +823,8 @@ struct RendererData {
 	aligned_i32vec3 worldOrigin;
 	aligned_uint32_t globalIlluminationTableCount;
 	aligned_uint8_t debugChunks;
-	aligned_uint8_t debugMode;
 };
-#line 9 "/home/olivier/projects/chill/src/v4d/modules/V4D_rtcubes/base.glsl"
+#line 10 "/home/olivier/projects/chill/src/v4d/modules/V4D_rtcubes/base.glsl"
 const float EPSILON = 0.00001;
 
 layout(push_constant) uniform PushConstant {
@@ -936,6 +953,7 @@ struct RayPayload {
 		ray.normal = normalize(mix(-gl_WorldRayDirectionEXT, normalize(cross(-gl_WorldRayDirectionEXT, tmp)), 1.0-bias));\
 	}\
 	ray.normal = DoubleSidedNormals(ray.normal);\
+	if (ray.bounces == 0 && camera.debugViewMode == RENDERER_DEBUG_MODE_RAYHIT_TIME) WRITE_DEBUG_TIME\
 }
 
 vec4 GetTexture(in sampler2D tex, in vec2 coords, in float t) {
@@ -970,6 +988,46 @@ float sdfCube(vec3 p, float r) {
 float sdfSphere(vec3 p, float r) {
 	return length(p) - r;
 }
+
+// Global Illumination
+uint HashGlobalPosition(uvec3 data) {
+	uint hash = 8u, tmp;
+
+	hash += data.x & 0xffffu;
+	tmp = (((data.x >> 16) & 0xffffu) << 11) ^ hash;
+	hash = (hash << 16) ^ tmp;
+	hash += hash >> 11;
+
+	hash += data.y & 0xffffu;
+	tmp = (((data.y >> 16) & 0xffffu) << 11) ^ hash;
+	hash = (hash << 16) ^ tmp;
+	hash += hash >> 11;
+
+	hash += data.z & 0xffffu;
+	tmp = (((data.z >> 16) & 0xffffu) << 11) ^ hash;
+	hash = (hash << 16) ^ tmp;
+	hash += hash >> 11;
+
+	hash ^= hash << 3;
+	hash += hash >> 5;
+	hash ^= hash << 4;
+	hash += hash >> 17;
+	hash ^= hash << 25;
+	hash += hash >> 6;
+
+	return hash;
+}
+uint GetGiIndex(in ivec3 worldPosition) {
+	return HashGlobalPosition(uvec3(worldPosition + renderer.worldOrigin + ivec3(1<<30))) % renderer.globalIlluminationTableCount;
+}
+GlobalIllumination GetGi(uint index) {
+	return renderer.globalIllumination[index];
+}
+
+// Debug Stuff
+uint64_t startTime = clockARB();
+#define WRITE_DEBUG_TIME {imageStore(img_debug, ivec2(gl_LaunchIDEXT.xy), vec4(Heatmap(float(double(clockARB() - startTime) / double(500000.0))), 1));}
+#define traceRayEXT {if (camera.debugViewMode == RENDERER_DEBUG_MODE_TRACE_RAY_COUNT) imageStore(img_debug, ivec2(gl_LaunchIDEXT.xy), vec4(0,0,0, imageLoad(img_debug, ivec2(gl_LaunchIDEXT.xy)).a + 1));} traceRayEXT
 
 #endif // _RTCUBES_SHADER_BASE_INCLUDED_
 #line 2 "/home/olivier/projects/chill/src/v4d/modules/CHILL_terrain/assets/shaders/voxel.glsl"
@@ -1320,42 +1378,6 @@ STATIC_ASSERT_ALIGNED16_SIZE(ChunkData, 80);
 #line 5 "/home/olivier/projects/chill/src/v4d/modules/CHILL_terrain/assets/shaders/voxel.glsl"
 #endif
 
-uint HashGlobalPosition(uvec3 data) {
-	uint hash = 8u, tmp;
-
-	hash += data.x & 0xffffu;
-	tmp = (((data.x >> 16) & 0xffffu) << 11) ^ hash;
-	hash = (hash << 16) ^ tmp;
-	hash += hash >> 11;
-
-	hash += data.y & 0xffffu;
-	tmp = (((data.y >> 16) & 0xffffu) << 11) ^ hash;
-	hash = (hash << 16) ^ tmp;
-	hash += hash >> 11;
-
-	hash += data.z & 0xffffu;
-	tmp = (((data.z >> 16) & 0xffffu) << 11) ^ hash;
-	hash = (hash << 16) ^ tmp;
-	hash += hash >> 11;
-
-	hash ^= hash << 3;
-	hash += hash >> 5;
-	hash ^= hash << 4;
-	hash += hash >> 17;
-	hash ^= hash << 25;
-	hash += hash >> 6;
-
-	return hash;
-}
-
-uint GetGiIndex(in ivec3 worldPosition) {
-	return HashGlobalPosition(uvec3(worldPosition + renderer.worldOrigin + ivec3(1<<30))) % renderer.globalIlluminationTableCount;
-}
-
-GlobalIllumination GetGi(uint index) {
-	return renderer.globalIllumination[index];
-}
-
 #ifdef SHADER_RCHIT
 	// Standard Block Lighting stuff
 	#define GI_SAMPLES 4
@@ -1394,18 +1416,20 @@ GlobalIllumination GetGi(uint index) {
 		
 		uint64_t chunkID = AABB.extra;
 		
-		{// Set Current Voxel GI Darker if opaque
-			uint giIndex = GetGiIndex(ivec3(round(ray.nextPosition - ray.normal * 0.5)));
-			int lock = atomicExchange(GetGi(giIndex).lock, 1);
-			if (lock == 0) {
-				float accumulation = min(GetGi(giIndex).radiance.a + 1, MAX_ACCUMULATION);
-				if (abs(GetGi(giIndex).frameIndex - int64_t(camera.frameIndex)) > ACCUMULATOR_MAX_FRAME_INDEX_DIFF) {
-					accumulation = 1;
+		if (OPTION_INDIRECT_LIGHTING) {// Set Current Voxel GI Darker if opaque
+			if (GetVoxel(chunkID, voxelPosInChunk) && uint64_t(ChunkData(chunkID).voxels) != 0 && ChunkData(chunkID).voxels.fill[VoxelIndex(voxelPosInChunk.x, voxelPosInChunk.y, voxelPosInChunk.z)] == VOXEL_FULL) {
+				uint giIndex = GetGiIndex(ivec3(round(ray.nextPosition - ray.normal * 0.5)));
+				int lock = atomicExchange(GetGi(giIndex).lock, 1);
+				if (lock == 0) {
+					float accumulation = min(GetGi(giIndex).radiance.a + 1, MAX_ACCUMULATION);
+					if (abs(GetGi(giIndex).frameIndex - int64_t(camera.frameIndex)) > ACCUMULATOR_MAX_FRAME_INDEX_DIFF) {
+						accumulation = 1;
+					}
+					GetGi(giIndex).frameIndex = int64_t(camera.frameIndex);
+					vec3 l = GetGi(giIndex).radiance.rgb;
+					GetGi(giIndex).radiance = vec4(mix(l, vec3(0), 1.0 / accumulation), accumulation);
+					GetGi(giIndex).lock = 0;
 				}
-				GetGi(giIndex).frameIndex = int64_t(camera.frameIndex);
-				vec3 l = GetGi(giIndex).radiance.rgb;
-				GetGi(giIndex).radiance = vec4(mix(l, vec3(0), 1.0 / accumulation), accumulation);
-				GetGi(giIndex).lock = 0;
 			}
 		}
 		
@@ -1415,7 +1439,7 @@ GlobalIllumination GetGi(uint index) {
 		
 		if (OPTION_INDIRECT_LIGHTING) {
 			
-			if (ray.bounces++ == 0) {
+			if (ray.bounces == 0) {
 				
 				uint lock = atomicExchange(GetGi(giIndex).lock, 1);
 				if (lock == 0) {
@@ -1436,6 +1460,7 @@ GlobalIllumination GetGi(uint index) {
 							nDotR *= -1;
 						}
 						ray.hitDistance = 0;
+						++ray.bounces;
 						traceRayEXT(tlas, 0, RENDERABLE_PRIMARY, 0/*rayType*/, SBT_HITGROUPS_PER_GEOMETRY/*nbRayTypes*/, 0/*missIndex*/, originalRay.nextPosition, camera.zNear, randomBounceDirection, camera.zFar, RAY_PAYLOAD_PRIMARY);
 						color += ray.color.rgb * originalRay.color.rgb * ACCUMULATOR_MULTIPLIER / GI_SAMPLES * nDotR;
 					}
@@ -1545,7 +1570,7 @@ GlobalIllumination GetGi(uint index) {
 
 	void ApplyDirectLighting(in vec3 albedo, in float diffuseMultiplier, in float specularMultiplier, in float specularPower) {
 		if (OPTION_DIRECT_LIGHTING) {
-			if (ray.bounces++ < 4) {// Direct Lighting (must apply this for diffuse materials only)
+			if (ray.bounces < 4) {// Direct Lighting (must apply this for diffuse materials only)
 				vec3 shadowRayDir = renderer.sunDir;
 				if (OPTION_SOFT_SHADOWS) {
 					float pointRadius = SUN_LIGHT_SOLID_ANGLE * RandomFloat(seed);
@@ -1565,6 +1590,7 @@ GlobalIllumination GetGi(uint index) {
 							break;
 						}
 						ray.hitDistance = 0;
+						++ray.bounces;
 						traceRayEXT(tlas, 0, RENDERABLE_ALL, 0/*rayType*/, SBT_HITGROUPS_PER_GEOMETRY/*nbRayTypes*/, 0/*missIndex*/, surfacePosition, camera.zNear, shadowRayDir, camera.zFar, RAY_PAYLOAD_PRIMARY);
 						if (ray.hitDistance == -1) {
 							vec3 diffuse = albedo * renderer.skyLightColor * dot(renderer.sunDir, originalRay.normal) * DIRECT_SUN_LIGHT_MULTIPLIER * diffuseMultiplier;
@@ -1597,7 +1623,7 @@ hitAttributeEXT hit {
 };
 
 
-#line 424 "/home/olivier/projects/chill/src/v4d/modules/CHILL_terrain/assets/shaders/voxel.glsl"
+#line 400 "/home/olivier/projects/chill/src/v4d/modules/CHILL_terrain/assets/shaders/voxel.glsl"
 
 void main() {
 	CLOSEST_HIT_BEGIN
@@ -1647,30 +1673,25 @@ void main() {
 		ApplyAmbientVoxelLighting(iPos, posInVoxel);
 		ApplyDirectLighting(albedo, 1.0/*diffuseMultiplier*/, 0.5/*specularMultiplier*/, 10.0/*specularPower*/);
 		
-	CLOSEST_HIT_END
-	
-	if (ray.bounces <= 2) {
-		
-		// // Debug Chunks
-		// if (/*renderer.debugChunks != 0 &&*/ (renderer.aim.aimGeometryID >> 12) == (ray.index.x >> 12)) {
-		// 	ray.color.rgb += 0.2;
-		// }
-		
-		// Aim Wireframe
-		if (renderer.aim.aimGeometryID == ray.index.x && renderer.aim.aabbIndex == ray.index.y) {
-			if (ivec3(round(renderer.aim.localPosition - renderer.aim.worldSpaceHitNormal*0.01)) == ivec3(round(ray.localPosition - ray.normal * 0.01))) {
-				vec2 coord = abs(fract(BOX_COORD) - 0.5);
-				float thickness = renderer.wireframeThickness * camera.renderScale * max(1, ray.hitDistance);
-				float border = step(0.5-thickness, max(coord.x, coord.y));
-				ray.color = mix(ray.color, renderer.wireframeColor, border);
+		if (ray.bounces == 0) {
+			
+			// Aim Wireframe
+			if (renderer.aim.aimGeometryID == ray.index.x && renderer.aim.aabbIndex == ray.index.y) {
+				if (ivec3(round(renderer.aim.localPosition - renderer.aim.worldSpaceHitNormal*0.01)) == ivec3(round(ray.localPosition - ray.normal * 0.01))) {
+					vec2 coord = abs(fract(BOX_COORD) - 0.5);
+					float thickness = renderer.wireframeThickness * camera.renderScale * max(1, ray.hitDistance);
+					float border = step(0.5-thickness, max(coord.x, coord.y));
+					ray.color = vec4(mix(ray.color.rgb, renderer.wireframeColor.rgb, border * renderer.wireframeColor.a), ray.color.a);
+				}
 			}
-		}
-	
-		// // Debug Normals
-		// ray.color.rgb = normalize(WORLD2VIEWNORMAL * ray.normal);
+			
+			const ivec2 imgCoords = ivec2(gl_LaunchIDEXT.xy);
+
+			if (camera.debugViewMode == RENDERER_DEBUG_MODE_UVS) {
+				imageStore(img_debug, imgCoords, vec4(BOX_COORD, 0, 1));
+			}
 		
-		// // Debug TexCoords
-		// ray.color.rgb = vec3(BOX_COORD,0);
-	
-	}
+		}
+		
+	CLOSEST_HIT_END
 }
