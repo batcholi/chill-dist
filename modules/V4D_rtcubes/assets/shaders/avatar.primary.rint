@@ -818,7 +818,8 @@ struct RendererData {
 	aligned_f32vec4 wireframeColor;
 	aligned_i32vec3 worldOrigin;
 	aligned_uint32_t globalIlluminationTableCount;
-	aligned_uint8_t debugChunks;
+	
+	aligned_int32_t giMaxSamples;
 };
 #line 10 "/home/olivier/projects/chill/src/v4d/modules/V4D_rtcubes/base.glsl"
 const float EPSILON = 0.00001;

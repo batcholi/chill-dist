@@ -818,7 +818,8 @@ struct RendererData {
 	aligned_f32vec4 wireframeColor;
 	aligned_i32vec3 worldOrigin;
 	aligned_uint32_t globalIlluminationTableCount;
-	aligned_uint8_t debugChunks;
+	
+	aligned_int32_t giMaxSamples;
 };
 #line 10 "/home/olivier/projects/chill/src/v4d/modules/V4D_rtcubes/base.glsl"
 const float EPSILON = 0.00001;
@@ -1400,13 +1401,13 @@ STATIC_ASSERT_ALIGNED16_SIZE(ChunkData, 16);
 	// Standard Lighting stuff
 	#define GI_2_BOUNCES_MAX_DISTANCE 100
 	#define GI_SAMPLES_MIN 1 // min samples to take in different direction, per gi bounce, when far
-	#define GI_SAMPLES_MAX 10 // max samples to take in different direction, per gi bounce, when near (THIS COULD BE A GRAPHICS SETTING THAT GOES UP TO 100)
+	#define GI_SAMPLES_MAX renderer.giMaxSamples // max samples to take in different direction, per gi bounce, when near (THIS COULD BE A GRAPHICS SETTING THAT GOES UP TO 100)
 	#define GI_SAMPLES_FALLOFF_START_DISTANCE 10
-	#define GI_SAMPLES_FALLOFF_END_DISTANCE 200
+	#define GI_SAMPLES_FALLOFF_END_DISTANCE 100
 	#define DI_BOUNCES 2 // number of bounces in which we trace for Direct Lighting
 	#define MAX_ACCUMULATION 200
 	#define ACCUMULATOR_MAX_FRAME_INDEX_DIFF 500
-	#define SUN_LIGHT_SOLID_ANGLE 0.02
+	#define SUN_LIGHT_SOLID_ANGLE 0.01
 
 	layout(set = 1, binding = SET1_BINDING_TLAS) uniform accelerationStructureEXT tlas;
 	
@@ -1589,7 +1590,7 @@ STATIC_ASSERT_ALIGNED16_SIZE(ChunkData, 16);
 	vec3 ApplyDirectLighting(in vec3 albedo, in float diffuseMultiplier, in float specularMultiplier, in float specularPower) {
 		if (OPTION_DIRECT_LIGHTING) {
 			if (ray.bounces < DI_BOUNCES) {// Direct Lighting (must apply this for diffuse materials only)
-				vec3 shadowRayDir = renderer.sunDir;
+				vec3 shadowRayDir = normalize(renderer.sunDir + vec3(0.0012765f));
 				if (OPTION_SOFT_SHADOWS) {
 					float pointRadius = SUN_LIGHT_SOLID_ANGLE * RandomFloat(seed);
 					float pointAngle = RandomFloat(seed) * 2.0 * 3.1415926535;
