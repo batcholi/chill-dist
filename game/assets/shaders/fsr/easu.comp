@@ -204,9 +204,6 @@
 #define RENDER_OPTION_DLSS (1u<< 1)
 #define RENDER_OPTION_TONE_MAPPING (1u<< 2)
 
-// up to 32 debug options
-// #define RENDER_DEBUG_xxx (1u<< 0)
-
 // Debug view modes
 #define RENDER_DEBUG_VIEWMODE_NONE 0
 
@@ -215,30 +212,29 @@
 #define MAX_CAMERAS 64
 #define MAX_TEXTURE_BINDINGS 65535
 
+#define NB_RENDERABLE_TYPES 8 // this will NOT change, it is a limitation of VK_KHR_ray_tracing
 // Renderable types
+#define RENDERABLE_TYPE_SOLID 0 // Solid mostly-opaque object, may be somewhat dynamic, typically vehicles, hulls, small to medium size game objects
+#define RENDERABLE_TYPE_SELF 1 // Typically refers to the current player's avatar when in first person view, invisible for primary rays but visible for reflections and shadow rays
+#define RENDERABLE_TYPE_STATIC 2 // Geometry that usually doesn't move and can extend to very large scales, typically Terrain
+#define RENDERABLE_TYPE_DYNAMIC 3 // Highly dynamic, small objects, typically mobs and temporary-animated objects, they do not occlude indirect lighting
+#define RENDERABLE_TYPE_VOLUME 4 // Geometry that is transparent and that can include other geometries within it, typically Water and Fog, may be somewhat dynamic
+// #define RENDERABLE_TYPE_CLUTTER 5 // Geometry that is usually present in large repeating quantities, typically Plants and Rocks, they do not occlude indirect lighting
+// #define RENDERABLE_TYPE_LIGHT_RADIUS 6 // Special geometry that denotes a light's radius, to be point-traced for finding relevant light sources that may be shining on surfaces for direct lighting
+// #define RENDERABLE_TYPE_OVERLAY 7 // Geometry that is ONLY visible from primary rays and that do not cast shadows, typically transparent bounding boxes and debug stuff
 
-#define NB_RENDERABLE_TYPES 8
-#define RENDERABLE_TYPE_OPAQUE 0
-#define RENDERABLE_TYPE_TRANSPARENT 1
-#define RENDERABLE_TYPE_SELF 2
-#define RENDERABLE_TYPE_TERRAIN 3
-#define RENDERABLE_TYPE_WATER 4
-#define RENDERABLE_TYPE_MOB 5
-// #define RENDERABLE_TYPE_CLUTTER 6
-// #define RENDERABLE_TYPE_ 7
-
-#define RENDERABLE_MASK_OPAQUE (1u<< RENDERABLE_TYPE_OPAQUE)
-#define RENDERABLE_MASK_TRANSPARENT (1u<< RENDERABLE_TYPE_TRANSPARENT)
+#define RENDERABLE_MASK_SOLID (1u<< RENDERABLE_TYPE_SOLID)
 #define RENDERABLE_MASK_SELF (1u<< RENDERABLE_TYPE_SELF)
-#define RENDERABLE_MASK_TERRAIN (1u<< RENDERABLE_TYPE_TERRAIN)
-#define RENDERABLE_MASK_WATER (1u<< RENDERABLE_TYPE_WATER)
-#define RENDERABLE_MASK_MOB (1u<< RENDERABLE_TYPE_MOB)
+#define RENDERABLE_MASK_STATIC (1u<< RENDERABLE_TYPE_STATIC)
+#define RENDERABLE_MASK_DYNAMIC (1u<< RENDERABLE_TYPE_DYNAMIC)
+#define RENDERABLE_MASK_VOLUME (1u<< RENDERABLE_TYPE_VOLUME)
 // #define RENDERABLE_MASK_CLUTTER (1u<< RENDERABLE_TYPE_CLUTTER)
-// #define RENDERABLE_MASK_ (1u<< RENDERABLE_TYPE_)
+// #define RENDERABLE_MASK_LIGHT_RADIUS (1u<< RENDERABLE_TYPE_LIGHT_RADIUS)
+// #define RENDERABLE_MASK_OVERLAY (1u<< RENDERABLE_TYPE_OVERLAY)
 #define RENDERABLE_ALL 0xff
 #define RENDERABLE_PRIMARY (~RENDERABLE_MASK_SELF)
-#define RENDERABLE_ALL_EXCEPT_WATER (RENDERABLE_ALL & ~RENDERABLE_MASK_WATER)
-#define RENDERABLE_PRIMARY_EXCEPT_WATER (RENDERABLE_PRIMARY & ~RENDERABLE_MASK_WATER)
+#define RENDERABLE_ALL_EXCEPT_VOLUME (RENDERABLE_ALL & ~RENDERABLE_MASK_VOLUME)
+#define RENDERABLE_PRIMARY_EXCEPT_VOLUME (RENDERABLE_PRIMARY & ~RENDERABLE_MASK_VOLUME)
 
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////
 // Structs and Buffer References -- Must use aligned_* explicit arithmetic types (or VkDeviceAddress as an uint64_t, or BUFFER_REFERENCE_ADDR(StructType))
@@ -265,7 +261,7 @@ struct CameraData {
 	aligned_float32_t gamma;
 	aligned_float32_t renderScale;
 	aligned_uint32_t options;
-	aligned_uint32_t debug;
+	aligned_uint32_t _unused;
 	aligned_uint32_t debugViewMode;
 	aligned_uint64_t frameIndex;
 	aligned_float64_t deltaTime;

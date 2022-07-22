@@ -211,9 +211,6 @@
 #define RENDER_OPTION_DLSS (1u<< 1)
 #define RENDER_OPTION_TONE_MAPPING (1u<< 2)
 
-// up to 32 debug options
-// #define RENDER_DEBUG_xxx (1u<< 0)
-
 // Debug view modes
 #define RENDER_DEBUG_VIEWMODE_NONE 0
 
@@ -222,30 +219,29 @@
 #define MAX_CAMERAS 64
 #define MAX_TEXTURE_BINDINGS 65535
 
+#define NB_RENDERABLE_TYPES 8 // this will NOT change, it is a limitation of VK_KHR_ray_tracing
 // Renderable types
+#define RENDERABLE_TYPE_SOLID 0 // Solid mostly-opaque object, may be somewhat dynamic, typically vehicles, hulls, small to medium size game objects
+#define RENDERABLE_TYPE_SELF 1 // Typically refers to the current player's avatar when in first person view, invisible for primary rays but visible for reflections and shadow rays
+#define RENDERABLE_TYPE_STATIC 2 // Geometry that usually doesn't move and can extend to very large scales, typically Terrain
+#define RENDERABLE_TYPE_DYNAMIC 3 // Highly dynamic, small objects, typically mobs and temporary-animated objects, they do not occlude indirect lighting
+#define RENDERABLE_TYPE_VOLUME 4 // Geometry that is transparent and that can include other geometries within it, typically Water and Fog, may be somewhat dynamic
+// #define RENDERABLE_TYPE_CLUTTER 5 // Geometry that is usually present in large repeating quantities, typically Plants and Rocks, they do not occlude indirect lighting
+// #define RENDERABLE_TYPE_LIGHT_RADIUS 6 // Special geometry that denotes a light's radius, to be point-traced for finding relevant light sources that may be shining on surfaces for direct lighting
+// #define RENDERABLE_TYPE_OVERLAY 7 // Geometry that is ONLY visible from primary rays and that do not cast shadows, typically transparent bounding boxes and debug stuff
 
-#define NB_RENDERABLE_TYPES 8
-#define RENDERABLE_TYPE_OPAQUE 0
-#define RENDERABLE_TYPE_TRANSPARENT 1
-#define RENDERABLE_TYPE_SELF 2
-#define RENDERABLE_TYPE_TERRAIN 3
-#define RENDERABLE_TYPE_WATER 4
-#define RENDERABLE_TYPE_MOB 5
-// #define RENDERABLE_TYPE_CLUTTER 6
-// #define RENDERABLE_TYPE_ 7
-
-#define RENDERABLE_MASK_OPAQUE (1u<< RENDERABLE_TYPE_OPAQUE)
-#define RENDERABLE_MASK_TRANSPARENT (1u<< RENDERABLE_TYPE_TRANSPARENT)
+#define RENDERABLE_MASK_SOLID (1u<< RENDERABLE_TYPE_SOLID)
 #define RENDERABLE_MASK_SELF (1u<< RENDERABLE_TYPE_SELF)
-#define RENDERABLE_MASK_TERRAIN (1u<< RENDERABLE_TYPE_TERRAIN)
-#define RENDERABLE_MASK_WATER (1u<< RENDERABLE_TYPE_WATER)
-#define RENDERABLE_MASK_MOB (1u<< RENDERABLE_TYPE_MOB)
+#define RENDERABLE_MASK_STATIC (1u<< RENDERABLE_TYPE_STATIC)
+#define RENDERABLE_MASK_DYNAMIC (1u<< RENDERABLE_TYPE_DYNAMIC)
+#define RENDERABLE_MASK_VOLUME (1u<< RENDERABLE_TYPE_VOLUME)
 // #define RENDERABLE_MASK_CLUTTER (1u<< RENDERABLE_TYPE_CLUTTER)
-// #define RENDERABLE_MASK_ (1u<< RENDERABLE_TYPE_)
+// #define RENDERABLE_MASK_LIGHT_RADIUS (1u<< RENDERABLE_TYPE_LIGHT_RADIUS)
+// #define RENDERABLE_MASK_OVERLAY (1u<< RENDERABLE_TYPE_OVERLAY)
 #define RENDERABLE_ALL 0xff
 #define RENDERABLE_PRIMARY (~RENDERABLE_MASK_SELF)
-#define RENDERABLE_ALL_EXCEPT_WATER (RENDERABLE_ALL & ~RENDERABLE_MASK_WATER)
-#define RENDERABLE_PRIMARY_EXCEPT_WATER (RENDERABLE_PRIMARY & ~RENDERABLE_MASK_WATER)
+#define RENDERABLE_ALL_EXCEPT_VOLUME (RENDERABLE_ALL & ~RENDERABLE_MASK_VOLUME)
+#define RENDERABLE_PRIMARY_EXCEPT_VOLUME (RENDERABLE_PRIMARY & ~RENDERABLE_MASK_VOLUME)
 
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////
 // Structs and Buffer References -- Must use aligned_* explicit arithmetic types (or VkDeviceAddress as an uint64_t, or BUFFER_REFERENCE_ADDR(StructType))
@@ -272,7 +268,7 @@ struct CameraData {
 	aligned_float32_t gamma;
 	aligned_float32_t renderScale;
 	aligned_uint32_t options;
-	aligned_uint32_t debug;
+	aligned_uint32_t _unused;
 	aligned_uint32_t debugViewMode;
 	aligned_uint64_t frameIndex;
 	aligned_float64_t deltaTime;
@@ -1017,6 +1013,24 @@ uint HashGlobalPosition(uvec3 data) {
 
 	return hash;
 }
+
+uvec3 HashGlobalPosition3(uvec3 v) {
+
+	v = v * 1664525u + 1013904223u;
+
+	v.x += v.y*v.z;
+	v.y += v.z*v.x;
+	v.z += v.x*v.y;
+
+	v ^= v >> 16u;
+
+	v.x += v.y*v.z;
+	v.y += v.z*v.x;
+	v.z += v.x*v.y;
+
+	return v;
+}
+
 uint GetGiIndex(in ivec3 worldPosition) {
 	uvec3 p = uvec3(worldPosition + renderer.worldOrigin + ivec3(1<<30));
 	return HashGlobalPosition(p) % renderer.globalIlluminationTableCount;
@@ -1274,18 +1288,18 @@ TerrainStack (Renderable)
 	)
 #endif
 
-BUFFER_REFERENCE_STRUCT(16) ChunkLightingData {
-	aligned_f32vec4 radiance[VOXELS_PER_CHUNK];
-	aligned_int32_t frameIndex[VOXELS_PER_CHUNK];
-};
-STATIC_ASSERT_ALIGNED16_SIZE(ChunkLightingData, (16+4)*VOXELS_PER_CHUNK);
+// BUFFER_REFERENCE_STRUCT(16) ChunkLightingData {
+// 	aligned_f32vec4 radiance[VOXELS_PER_CHUNK];
+// 	aligned_int32_t frameIndex[VOXELS_PER_CHUNK];
+// };
+// STATIC_ASSERT_ALIGNED16_SIZE(ChunkLightingData, (16+4)*VOXELS_PER_CHUNK);
 
-BUFFER_REFERENCE_STRUCT(16) GlobalLightingData {
-	aligned_f32vec4 radiance;
-	aligned_f32vec3 _unused;
-	aligned_int32_t frameIndex;
-};
-STATIC_ASSERT_ALIGNED16_SIZE(GlobalLightingData, 32);
+// BUFFER_REFERENCE_STRUCT(16) GlobalLightingData {
+// 	aligned_f32vec4 radiance;
+// 	aligned_f32vec3 _unused;
+// 	aligned_int32_t frameIndex;
+// };
+// STATIC_ASSERT_ALIGNED16_SIZE(GlobalLightingData, 32);
 
 struct Voxel {
 	uint64_t fill;
@@ -1312,50 +1326,52 @@ STATIC_ASSERT_ALIGNED16_SIZE(ChunkVoxelData, (8+2+1)*VOXELS_PER_CHUNK + 16 + 16)
 
 BUFFER_REFERENCE_FORWARD_DECLARE(ChunkData)
 BUFFER_REFERENCE_STRUCT_READONLY(16) ChunkData {
-	// Adjacent chunkData
-	BUFFER_REFERENCE_ADDR(ChunkData) plusX;
-	BUFFER_REFERENCE_ADDR(ChunkData) minusX;
-	BUFFER_REFERENCE_ADDR(ChunkData) plusZ;
-	BUFFER_REFERENCE_ADDR(ChunkData) minusZ;
-	BUFFER_REFERENCE_ADDR(ChunkData) plusY;
-	BUFFER_REFERENCE_ADDR(ChunkData) minusY;
 	BUFFER_REFERENCE_ADDR(ChunkVoxelData) voxels;
-	BUFFER_REFERENCE_ADDR(ChunkLightingData) lighting;
-	BUFFER_REFERENCE_ADDR(GlobalLightingData) globalLighting;
+	// BUFFER_REFERENCE_ADDR(ChunkLightingData) lighting;
+	// BUFFER_REFERENCE_ADDR(GlobalLightingData) globalLighting;
+	// Adjacent chunkData
+	// BUFFER_REFERENCE_ADDR(ChunkData) plusX;
+	// BUFFER_REFERENCE_ADDR(ChunkData) minusX;
+	// BUFFER_REFERENCE_ADDR(ChunkData) plusZ;
+	// BUFFER_REFERENCE_ADDR(ChunkData) minusZ;
+	// BUFFER_REFERENCE_ADDR(ChunkData) plusY;
+	// BUFFER_REFERENCE_ADDR(ChunkData) minusY;
 	aligned_uint64_t _unused;
 };
-STATIC_ASSERT_ALIGNED16_SIZE(ChunkData, 80);
+STATIC_ASSERT_ALIGNED16_SIZE(ChunkData, 16);
 
 #ifndef __cplusplus // GLSL
-	bool GetVoxel(inout uint64_t chunkID, inout ivec3 iPos) {
-		// ChunkData chunk = ChunkData(chunkID); // Because of a bug in AMD drivers, we cannot pass the buffer_reference as an argument to a function, instead we pass its address
-		// while (iPos.y < 0 && uint64_t(chunk.minusY) != 0) {
-		// 	chunk = chunk.minusY;
-		// 	iPos.y += VOXELS_Y;
-		// }
-		// while (iPos.y >= VOXELS_Y && uint64_t(chunk.plusY) != 0) {
-		// 	chunk = chunk.plusY;
-		// 	iPos.y -= VOXELS_Y;
-		// }
-		// while (iPos.x < 0 && uint64_t(chunk.minusX) != 0) {
-		// 	chunk = chunk.minusX;
-		// 	iPos.x += VOXELS_X;
-		// }
-		// while (iPos.z < 0 && uint64_t(chunk.minusZ) != 0) {
-		// 	chunk = chunk.minusZ;
-		// 	iPos.z += VOXELS_Z;
-		// }
-		// while (iPos.x >= VOXELS_X && uint64_t(chunk.plusX) != 0) {
-		// 	chunk = chunk.plusX;
-		// 	iPos.x -= VOXELS_X;
-		// }
-		// while (iPos.z >= VOXELS_Z && uint64_t(chunk.plusZ) != 0) {
-		// 	chunk = chunk.plusZ;
-		// 	iPos.z -= VOXELS_Z;
-		// }
-		// chunkID = uint64_t(chunk); // Because of the AMD bug mentioned above...
-		return iPos.x >= 0 && iPos.y >= 0 && iPos.z >= 0 && iPos.x < VOXELS_X && iPos.y < VOXELS_Y && iPos.z < VOXELS_Z;
-	}
+	bool IsVoxel(in uint64_t chunkID, in ivec3 iPos) {return chunkID != 0 && uint64_t(ChunkData(chunkID).voxels) != 0 && iPos.x >= 0 && iPos.y >= 0 && iPos.z >= 0 && iPos.x < VOXELS_X && iPos.y < VOXELS_Y && iPos.z < VOXELS_Z;}
+	
+	// bool GetVoxel(inout uint64_t chunkID, inout ivec3 iPos) {
+	// 	ChunkData chunk = ChunkData(chunkID); // Because of a bug in AMD drivers, we cannot pass the buffer_reference as an argument to a function, instead we pass its address
+	// 	while (iPos.y < 0 && uint64_t(chunk.minusY) != 0) {
+	// 		chunk = chunk.minusY;
+	// 		iPos.y += VOXELS_Y;
+	// 	}
+	// 	while (iPos.y >= VOXELS_Y && uint64_t(chunk.plusY) != 0) {
+	// 		chunk = chunk.plusY;
+	// 		iPos.y -= VOXELS_Y;
+	// 	}
+	// 	while (iPos.x < 0 && uint64_t(chunk.minusX) != 0) {
+	// 		chunk = chunk.minusX;
+	// 		iPos.x += VOXELS_X;
+	// 	}
+	// 	while (iPos.z < 0 && uint64_t(chunk.minusZ) != 0) {
+	// 		chunk = chunk.minusZ;
+	// 		iPos.z += VOXELS_Z;
+	// 	}
+	// 	while (iPos.x >= VOXELS_X && uint64_t(chunk.plusX) != 0) {
+	// 		chunk = chunk.plusX;
+	// 		iPos.x -= VOXELS_X;
+	// 	}
+	// 	while (iPos.z >= VOXELS_Z && uint64_t(chunk.plusZ) != 0) {
+	// 		chunk = chunk.plusZ;
+	// 		iPos.z -= VOXELS_Z;
+	// 	}
+	// 	chunkID = uint64_t(chunk); // Because of the AMD bug mentioned above...
+	// 	return iPos.x >= 0 && iPos.y >= 0 && iPos.z >= 0 && iPos.x < VOXELS_X && iPos.y < VOXELS_Y && iPos.z < VOXELS_Z;
+	// }
 	// vec3 GetVoxelLighting(inout uint64_t chunkID, inout ivec3 iPos) {
 	// 	if (GetVoxel(chunkID, iPos)) {
 	// 		ChunkData chunk = ChunkData(chunkID);
@@ -1375,67 +1391,54 @@ STATIC_ASSERT_ALIGNED16_SIZE(ChunkData, 80);
 	// 	}
 	// 	return vec3(1); // Non-existent
 	// }
+	
 #endif
 #line 5 "/home/olivier/projects/chill/src/v4d/modules/CHILL_terrain/assets/shaders/voxel.glsl"
 #endif
 
 #ifdef SHADER_RCHIT
 	// Standard Lighting stuff
-	#define GI_BOUNCES 2 // max 8
-	#define GI_SAMPLES 5 // samples to take in different direction, per gi bounce
-	#define DI_BOUNCES 3 // number of bounces in which we trace for Direct Lighting
-	#define MAX_ACCUMULATION 500
+	#define GI_2_BOUNCES_MAX_DISTANCE 100
+	#define GI_SAMPLES_MIN 1 // min samples to take in different direction, per gi bounce, when far
+	#define GI_SAMPLES_MAX 10 // max samples to take in different direction, per gi bounce, when near (THIS COULD BE A GRAPHICS SETTING THAT GOES UP TO 100)
+	#define GI_SAMPLES_FALLOFF_START_DISTANCE 10
+	#define GI_SAMPLES_FALLOFF_END_DISTANCE 200
+	#define DI_BOUNCES 2 // number of bounces in which we trace for Direct Lighting
+	#define MAX_ACCUMULATION 200
 	#define ACCUMULATOR_MAX_FRAME_INDEX_DIFF 500
-	#define ACCUMULATOR_MULTIPLIER 3.1415926536
-	#define DIRECT_SUN_LIGHT_MULTIPLIER 3.1415926536
-	#define SUN_LIGHT_SOLID_ANGLE 0.03
+	#define SUN_LIGHT_SOLID_ANGLE 0.02
 
 	layout(set = 1, binding = SET1_BINDING_TLAS) uniform accelerationStructureEXT tlas;
 	
 	uint seed = InitRandomSeed(InitRandomSeed(gl_LaunchIDEXT.x, gl_LaunchIDEXT.y), uint(camera.frameIndex));
 	
-	void ApplyAmbientVoxelLighting(in ivec3 voxelPosInChunk, in vec3 posInVoxel) {
+	vec3 ApplyAmbientVoxelLighting(in vec3 albedo, in ivec3 voxelPosInChunk, in vec3 posInVoxel) {
 		const int nbAdjacentSides = 18;
 		const ivec3 adjacentSides[nbAdjacentSides] = {
 			ivec3( 0, 0, 1),
 			ivec3( 0, 1, 0),
+			ivec3( 0, 1, 1),
 			ivec3( 1, 0, 0),
+			ivec3( 1, 0, 1),
+			ivec3( 1, 1, 0),
+			
 			ivec3( 0, 0,-1),
 			ivec3( 0,-1, 0),
-			ivec3(-1, 0, 0),
 			ivec3( 0,-1,-1),
-			ivec3( 1, 0, 1),
-			ivec3( 0, 1, 1),
-			ivec3( 1, 1, 0),
+			ivec3(-1, 0, 0),
 			ivec3(-1, 0,-1),
 			ivec3(-1,-1, 0),
+			
 			ivec3( 0,-1, 1),
 			ivec3(-1, 0, 1),
 			ivec3(-1, 1, 0),
+			
 			ivec3( 0, 1,-1),
 			ivec3( 1, 0,-1),
 			ivec3( 1,-1, 0),
 		};
 		
 		uint64_t chunkID = AABB.extra;
-		
-		if (OPTION_INDIRECT_LIGHTING) {// Set Current Voxel GI Darker if opaque
-			if (GetVoxel(chunkID, voxelPosInChunk) && uint64_t(ChunkData(chunkID).voxels) != 0 && ChunkData(chunkID).voxels.fill[VoxelIndex(voxelPosInChunk.x, voxelPosInChunk.y, voxelPosInChunk.z)] == VOXEL_FULL) {
-				uint giIndex = GetGiIndex(ivec3(round(ray.nextPosition - ray.normal * 0.5)));
-				int lock = atomicExchange(GetGi(giIndex).lock, 1);
-				if (lock == 0) {
-					float accumulation = min(GetGi(giIndex).radiance.a + 1, MAX_ACCUMULATION);
-					if (abs(GetGi(giIndex).frameIndex - int64_t(camera.frameIndex)) > ACCUMULATOR_MAX_FRAME_INDEX_DIFF) {
-						accumulation = 1;
-					}
-					GetGi(giIndex).frameIndex = int64_t(camera.frameIndex);
-					vec3 l = GetGi(giIndex).radiance.rgb;
-					GetGi(giIndex).radiance = vec4(mix(l, vec3(0), 1.0 / accumulation), accumulation);
-					GetGi(giIndex).lock = 0;
-				}
-			}
-		}
-		
 		ivec3 facingVoxelPos = voxelPosInChunk + ivec3(round(ray.normal));
 		ivec3 facingWorldPos = ivec3(round(ray.nextPosition + ray.normal * 0.5));
 		uint giIndex = GetGiIndex(facingWorldPos);
@@ -1443,26 +1446,49 @@ STATIC_ASSERT_ALIGNED16_SIZE(ChunkData, 80);
 		// Accumulate indirect lighting
 		if (OPTION_INDIRECT_LIGHTING) {
 			
-			if (ray.bounces < GI_BOUNCES) {
+			float dist = length((camera.viewMatrix * vec4(facingWorldPos, 1)).xyz);
+			
+			int maxBounces = dist > GI_2_BOUNCES_MAX_DISTANCE? 1:2;
+			
+			if (ray.bounces < maxBounces) {
 				
-				// For Performance reasons, we're rounding up the lock index to a higher fraction when geometry is further away, but we're still accumulating in the proper hash
-				float dist = length((camera.viewMatrix * vec4(facingWorldPos, 1)).xyz);
-				int d = int(floor(max(10, dist - 10) / 10));
-				uint giIndexLock = GetGiIndex(facingWorldPos/d*d);
+				if (ray.bounces == 0) {// Set Current Voxel GI Darker if opaque
+					if (IsVoxel(chunkID, voxelPosInChunk) && ChunkData(chunkID).voxels.fill[VoxelIndex(voxelPosInChunk.x, voxelPosInChunk.y, voxelPosInChunk.z)] == VOXEL_FULL) {
+						uint giIndexCurrent = GetGiIndex(ivec3(round(ray.nextPosition - ray.normal * 0.5)));
+						int lock = atomicExchange(GetGi(giIndexCurrent).lock, 1);
+						if (lock == 0) {
+							float accumulation = min(GetGi(giIndexCurrent).radiance.a + 1, MAX_ACCUMULATION);
+							if (abs(GetGi(giIndexCurrent).frameIndex - int64_t(camera.frameIndex)) > ACCUMULATOR_MAX_FRAME_INDEX_DIFF) {
+								accumulation = 1;
+							}
+							GetGi(giIndexCurrent).frameIndex = int64_t(camera.frameIndex);
+							vec3 l = GetGi(giIndexCurrent).radiance.rgb;
+							GetGi(giIndexCurrent).radiance = vec4(mix(l, vec3(0), min(1, 100.0 / accumulation)), accumulation);
+							GetGi(giIndexCurrent).lock = 0;
+						}
+					}
+				}
 				
-				uint lock = atomicExchange(GetGi(giIndexLock).lock, 1);
+				uint lock = atomicExchange(GetGi(giIndex).lock, 1);
 				if (lock == 0) {
+					float adjacentMixRatio = 0.2;
 					
-					float accumulation = min(GetGi(giIndex).radiance.a + 1, MAX_ACCUMULATION);
-					if (abs(GetGi(giIndex).frameIndex - int64_t(camera.frameIndex)) > ACCUMULATOR_MAX_FRAME_INDEX_DIFF) {
-						accumulation = 1;
+					float accumulation;
+					if (ray.bounces == 0) {
+						accumulation = min(GetGi(giIndex).radiance.a + 1, MAX_ACCUMULATION);
+						if (abs(GetGi(giIndex).frameIndex - int64_t(camera.frameIndex)) > ACCUMULATOR_MAX_FRAME_INDEX_DIFF) {
+							accumulation = 1;
+							adjacentMixRatio = 1;
+						}
 					}
 					
 					RayPayload originalRay = ray;
-					vec3 color = vec3(0);
 					
 					++ray.bounces;
-					for (int i = 0; i < GI_SAMPLES; ++i) {
+					
+					vec3 color = vec3(0);
+					int sampleCount = int(round(mix(GI_SAMPLES_MAX, GI_SAMPLES_MIN, smoothstep(GI_SAMPLES_FALLOFF_START_DISTANCE, GI_SAMPLES_FALLOFF_END_DISTANCE, dist))));
+					for (int i = 0; i < sampleCount; ++i) {
 						vec3 randomBounceDirection = normalize(RandomInUnitSphere(seed));
 						float nDotR = dot(originalRay.normal, randomBounceDirection);
 						if (nDotR < 0) {
@@ -1471,41 +1497,51 @@ STATIC_ASSERT_ALIGNED16_SIZE(ChunkData, 80);
 						}
 						ray.hitDistance = 0;
 						traceRayEXT(tlas, 0, RENDERABLE_PRIMARY, 0/*rayType*/, SBT_HITGROUPS_PER_GEOMETRY/*nbRayTypes*/, 0/*missIndex*/, originalRay.nextPosition, camera.zNear, randomBounceDirection, camera.zFar, RAY_PAYLOAD_PRIMARY);
-						color += ray.color.rgb * originalRay.color.rgb * ACCUMULATOR_MULTIPLIER / GI_SAMPLES * nDotR;
+						color += ray.color.rgb * nDotR / sampleCount;
 					}
 					
 					ray = originalRay;
 					
-					GetGi(giIndex).frameIndex = int64_t(camera.frameIndex);
-					vec3 l = GetGi(giIndex).radiance.rgb;
-					GetGi(giIndex).radiance = vec4(mix(l, color, 1.0/accumulation), accumulation);
-					GetGi(giIndexLock).lock = 0;
-				
-					for (int i = 0; i < nbAdjacentSides; ++i) {
-						float mixRatio = 0.25;
-						if (dot(vec3(adjacentSides[i]), ray.normal) == 0) {
-							uint adjacentGiIndex = GetGiIndex(facingWorldPos + adjacentSides[i]);
-							int lock = atomicExchange(GetGi(adjacentGiIndex).lock, 1);
-							if (lock == 0) {
-								float accumulation = min(GetGi(adjacentGiIndex).radiance.a + 1, MAX_ACCUMULATION);
-								if (abs(GetGi(adjacentGiIndex).frameIndex - int64_t(camera.frameIndex)) > ACCUMULATOR_MAX_FRAME_INDEX_DIFF) {
-									accumulation = 1;
+					if (ray.bounces == 0) {
+						GetGi(giIndex).frameIndex = int64_t(camera.frameIndex);
+						vec3 l = GetGi(giIndex).radiance.rgb;
+						GetGi(giIndex).radiance = vec4(mix(l, color, 1.0/accumulation), accumulation);
+						GetGi(giIndex).lock = 0;
+					
+						for (int i = 0; i < nbAdjacentSides; ++i) {
+							if (abs(dot(vec3(adjacentSides[i]), ray.normal)) < 0.2) {
+								uint adjacentGiIndex = GetGiIndex(facingWorldPos + adjacentSides[i]);
+								int lock = atomicExchange(GetGi(adjacentGiIndex).lock, 1);
+								if (lock == 0) {
+									float accumulation = min(GetGi(adjacentGiIndex).radiance.a + 1, MAX_ACCUMULATION);
+									if (abs(GetGi(adjacentGiIndex).frameIndex - int64_t(camera.frameIndex)) > ACCUMULATOR_MAX_FRAME_INDEX_DIFF) {
+										accumulation = 1;
+										adjacentMixRatio = 1;
+									}
+									GetGi(adjacentGiIndex).frameIndex = int64_t(camera.frameIndex);
+									vec3 l = GetGi(adjacentGiIndex).radiance.rgb;
+									GetGi(adjacentGiIndex).radiance = vec4(mix(l, color, adjacentMixRatio / accumulation), accumulation);
+									GetGi(adjacentGiIndex).lock = 0;
 								}
-								GetGi(adjacentGiIndex).frameIndex = int64_t(camera.frameIndex);
-								vec3 l = GetGi(adjacentGiIndex).radiance.rgb;
-								GetGi(adjacentGiIndex).radiance = vec4(mix(l, color, mixRatio / accumulation), accumulation);
-								GetGi(adjacentGiIndex).lock = 0;
 							}
 						}
+					} else {
+						ray.color.rgb += color;
+						GetGi(giIndex).lock = 0;
 					}
 				}
 			}
 		}
 		
 		// Apply indirect lighting
-		if (OPTION_INDIRECT_LIGHTING) {
+		if (OPTION_INDIRECT_LIGHTING && ray.bounces == 0) {
 			ivec3 facingVoxelPos = voxelPosInChunk + ivec3(round(ray.normal));
-			vec4 lighting = vec4(GetGi(giIndex).radiance.rgb, 1);
+			vec4 lighting;
+			if (abs(GetGi(giIndex).frameIndex - int64_t(camera.frameIndex)) < ACCUMULATOR_MAX_FRAME_INDEX_DIFF) {
+				lighting = vec4(GetGi(giIndex).radiance.rgb, 1);
+			} else {
+				lighting = vec4(0);
+			}
 			for (int i = 0; i < nbAdjacentSides; ++i) {
 				if (dot(vec3(adjacentSides[i]), ray.normal) == 0) {
 					
@@ -1514,21 +1550,21 @@ STATIC_ASSERT_ALIGNED16_SIZE(ChunkData, 80);
 						if (adjacentSides[i].x != 0) {
 							ivec3 pos = facingVoxelPos + adjacentSides[i] - ivec3(adjacentSides[i].x, 0, 0);
 							uint64_t adjacentVoxelChunkID = chunkID;
-							if (GetVoxel(adjacentVoxelChunkID, pos) && uint64_t(ChunkData(adjacentVoxelChunkID).voxels) != 0 && ChunkData(adjacentVoxelChunkID).voxels.fill[VoxelIndex(pos.x, pos.y, pos.z)] == VOXEL_FULL) {
+							if (IsVoxel(adjacentVoxelChunkID, pos) && ChunkData(adjacentVoxelChunkID).voxels.fill[VoxelIndex(pos.x, pos.y, pos.z)] == VOXEL_FULL) {
 								diagonalsOccluded++;
 							}
 						}
 						if (adjacentSides[i].y != 0) {
 							ivec3 pos = facingVoxelPos + adjacentSides[i] - ivec3(0, adjacentSides[i].y, 0);
 							uint64_t adjacentVoxelChunkID = chunkID;
-							if (GetVoxel(adjacentVoxelChunkID, pos) && uint64_t(ChunkData(adjacentVoxelChunkID).voxels) != 0 && ChunkData(adjacentVoxelChunkID).voxels.fill[VoxelIndex(pos.x, pos.y, pos.z)] == VOXEL_FULL) {
+							if (IsVoxel(adjacentVoxelChunkID, pos) && ChunkData(adjacentVoxelChunkID).voxels.fill[VoxelIndex(pos.x, pos.y, pos.z)] == VOXEL_FULL) {
 								diagonalsOccluded++;
 							}
 						}
 						if (adjacentSides[i].z != 0) {
 							ivec3 pos = facingVoxelPos + adjacentSides[i] - ivec3(0, 0, adjacentSides[i].z);
 							uint64_t adjacentVoxelChunkID = chunkID;
-							if (GetVoxel(adjacentVoxelChunkID, pos) && uint64_t(ChunkData(adjacentVoxelChunkID).voxels) != 0 && ChunkData(adjacentVoxelChunkID).voxels.fill[VoxelIndex(pos.x, pos.y, pos.z)] == VOXEL_FULL) {
+							if (IsVoxel(adjacentVoxelChunkID, pos) && ChunkData(adjacentVoxelChunkID).voxels.fill[VoxelIndex(pos.x, pos.y, pos.z)] == VOXEL_FULL) {
 								diagonalsOccluded++;
 							}
 						}
@@ -1539,16 +1575,18 @@ STATIC_ASSERT_ALIGNED16_SIZE(ChunkData, 80);
 					}
 					
 					uint adjacentGiIndex = GetGiIndex(facingWorldPos + adjacentSides[i]);
-					uint64_t adjacentVoxelChunkID = chunkID;
 					vec3 p = posInVoxel - vec3(adjacentSides[i]);
-					lighting += vec4(GetGi(adjacentGiIndex).radiance.rgb * (1 - clamp(sdfSphere(p, 0.667), 0, 1)), 1);
+					if (abs(GetGi(adjacentGiIndex).frameIndex - int64_t(camera.frameIndex)) < ACCUMULATOR_MAX_FRAME_INDEX_DIFF) {
+						lighting += vec4(GetGi(adjacentGiIndex).radiance.rgb * (1 - clamp(sdfSphere(p, 0.667), 0, 1)), 1);
+					}
 				}
 			}
-			ray.color.rgb *= clamp(lighting.rgb/lighting.a, 0, 1);
+			return albedo * lighting.rgb / max(1, lighting.a);
 		}
+		return vec3(0);
 	}
 
-	void ApplyDirectLighting(in vec3 albedo, in float diffuseMultiplier, in float specularMultiplier, in float specularPower) {
+	vec3 ApplyDirectLighting(in vec3 albedo, in float diffuseMultiplier, in float specularMultiplier, in float specularPower) {
 		if (OPTION_DIRECT_LIGHTING) {
 			if (ray.bounces < DI_BOUNCES) {// Direct Lighting (must apply this for diffuse materials only)
 				vec3 shadowRayDir = renderer.sunDir;
@@ -1573,7 +1611,7 @@ STATIC_ASSERT_ALIGNED16_SIZE(ChunkData, 80);
 						++ray.bounces;
 						traceRayEXT(tlas, 0, RENDERABLE_ALL, 0/*rayType*/, SBT_HITGROUPS_PER_GEOMETRY/*nbRayTypes*/, 0/*missIndex*/, surfacePosition, camera.zNear, shadowRayDir, camera.zFar, RAY_PAYLOAD_PRIMARY);
 						if (ray.hitDistance == -1) {
-							vec3 diffuse = albedo * renderer.skyLightColor * dot(renderer.sunDir, originalRay.normal) * DIRECT_SUN_LIGHT_MULTIPLIER * diffuseMultiplier;
+							vec3 diffuse = albedo * renderer.skyLightColor * dot(renderer.sunDir, originalRay.normal) * diffuseMultiplier;
 							vec3 specular = renderer.skyLightColor * pow(clamp(dot(originalRay.normal, normalize(renderer.sunDir - gl_WorldRayDirectionEXT)), 0, 1), specularPower) * specularMultiplier;
 							directLighting *= diffuse + specular;
 							break;
@@ -1587,10 +1625,11 @@ STATIC_ASSERT_ALIGNED16_SIZE(ChunkData, 80);
 						}
 					}
 					ray = originalRay;
-					ray.color.rgb += directLighting;
+					return directLighting;
 				}
 			}
 		}
+		return vec3(0);
 	}
 	
 #endif
@@ -1603,7 +1642,7 @@ hitAttributeEXT hit {
 };
 
 
-#line 231 "/home/olivier/projects/chill/src/v4d/modules/CHILL_terrain/assets/shaders/voxel.glsl"
+#line 253 "/home/olivier/projects/chill/src/v4d/modules/CHILL_terrain/assets/shaders/voxel.glsl"
 
 bool IsValidVoxel(in ivec3 iPos, in vec3 gridOffset) {
 	if (iPos.x < 0 || iPos.y < 0 || iPos.z < 0) return false;
