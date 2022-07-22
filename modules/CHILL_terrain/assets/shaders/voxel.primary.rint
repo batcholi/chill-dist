@@ -1018,7 +1018,8 @@ uint HashGlobalPosition(uvec3 data) {
 	return hash;
 }
 uint GetGiIndex(in ivec3 worldPosition) {
-	return HashGlobalPosition(uvec3(worldPosition + renderer.worldOrigin + ivec3(1<<30))) % renderer.globalIlluminationTableCount;
+	uvec3 p = uvec3(worldPosition + renderer.worldOrigin + ivec3(1<<30));
+	return HashGlobalPosition(p) % renderer.globalIlluminationTableCount;
 }
 GlobalIllumination GetGi(uint index) {
 	return renderer.globalIllumination[index];
@@ -1439,11 +1440,17 @@ STATIC_ASSERT_ALIGNED16_SIZE(ChunkData, 80);
 		ivec3 facingWorldPos = ivec3(round(ray.nextPosition + ray.normal * 0.5));
 		uint giIndex = GetGiIndex(facingWorldPos);
 		
+		// Accumulate indirect lighting
 		if (OPTION_INDIRECT_LIGHTING) {
 			
 			if (ray.bounces < GI_BOUNCES) {
 				
-				uint lock = atomicExchange(GetGi(giIndex).lock, 1);
+				// For Performance reasons, we're rounding up the lock index to a higher fraction when geometry is further away, but we're still accumulating in the proper hash
+				float dist = length((camera.viewMatrix * vec4(facingWorldPos, 1)).xyz);
+				int d = int(floor(max(10, dist - 10) / 10));
+				uint giIndexLock = GetGiIndex(facingWorldPos/d*d);
+				
+				uint lock = atomicExchange(GetGi(giIndexLock).lock, 1);
 				if (lock == 0) {
 					
 					float accumulation = min(GetGi(giIndex).radiance.a + 1, MAX_ACCUMULATION);
@@ -1472,41 +1479,11 @@ STATIC_ASSERT_ALIGNED16_SIZE(ChunkData, 80);
 					GetGi(giIndex).frameIndex = int64_t(camera.frameIndex);
 					vec3 l = GetGi(giIndex).radiance.rgb;
 					GetGi(giIndex).radiance = vec4(mix(l, color, 1.0/accumulation), accumulation);
-					GetGi(giIndex).lock = 0;
+					GetGi(giIndexLock).lock = 0;
 				
 					for (int i = 0; i < nbAdjacentSides; ++i) {
 						float mixRatio = 0.25;
 						if (dot(vec3(adjacentSides[i]), ray.normal) == 0) {
-							
-							// if (abs(adjacentSides[i].x) + abs(adjacentSides[i].y) + abs(adjacentSides[i].z) == 2) {
-							// 	mixRatio *= 0.5;
-							// 	uint diagonalsOccluded = 0;
-							// 	if (adjacentSides[i].x != 0) {
-							// 		ivec3 pos = facingVoxelPos + adjacentSides[i] - ivec3(adjacentSides[i].x, 0, 0);
-							// 		uint64_t adjacentVoxelChunkID = chunkID;
-							// 		if (GetVoxel(adjacentVoxelChunkID, pos) && uint64_t(ChunkData(adjacentVoxelChunkID).voxels) != 0 && ChunkData(adjacentVoxelChunkID).voxels.fill[VoxelIndex(pos.x, pos.y, pos.z)] == VOXEL_FULL) {
-							// 			diagonalsOccluded++;
-							// 		}
-							// 	}
-							// 	if (adjacentSides[i].y != 0) {
-							// 		ivec3 pos = facingVoxelPos + adjacentSides[i] - ivec3(0, adjacentSides[i].y, 0);
-							// 		uint64_t adjacentVoxelChunkID = chunkID;
-							// 		if (GetVoxel(adjacentVoxelChunkID, pos) && uint64_t(ChunkData(adjacentVoxelChunkID).voxels) != 0 && ChunkData(adjacentVoxelChunkID).voxels.fill[VoxelIndex(pos.x, pos.y, pos.z)] == VOXEL_FULL) {
-							// 			diagonalsOccluded++;
-							// 		}
-							// 	}
-							// 	if (adjacentSides[i].z != 0) {
-							// 		ivec3 pos = facingVoxelPos + adjacentSides[i] - ivec3(0, 0, adjacentSides[i].z);
-							// 		uint64_t adjacentVoxelChunkID = chunkID;
-							// 		if (GetVoxel(adjacentVoxelChunkID, pos) && uint64_t(ChunkData(adjacentVoxelChunkID).voxels) != 0 && ChunkData(adjacentVoxelChunkID).voxels.fill[VoxelIndex(pos.x, pos.y, pos.z)] == VOXEL_FULL) {
-							// 			diagonalsOccluded++;
-							// 		}
-							// 	}
-							// 	if (diagonalsOccluded >= 2) {
-							// 		continue;
-							// 	}
-							// }
-			
 							uint adjacentGiIndex = GetGiIndex(facingWorldPos + adjacentSides[i]);
 							int lock = atomicExchange(GetGi(adjacentGiIndex).lock, 1);
 							if (lock == 0) {
@@ -1525,7 +1502,8 @@ STATIC_ASSERT_ALIGNED16_SIZE(ChunkData, 80);
 			}
 		}
 		
-		if (OPTION_INDIRECT_LIGHTING) {// Apply indirect lighting and/or ambient occlusion
+		// Apply indirect lighting
+		if (OPTION_INDIRECT_LIGHTING) {
 			ivec3 facingVoxelPos = voxelPosInChunk + ivec3(round(ray.normal));
 			vec4 lighting = vec4(GetGi(giIndex).radiance.rgb, 1);
 			for (int i = 0; i < nbAdjacentSides; ++i) {
@@ -1625,7 +1603,7 @@ hitAttributeEXT hit {
 };
 
 
-#line 254 "/home/olivier/projects/chill/src/v4d/modules/CHILL_terrain/assets/shaders/voxel.glsl"
+#line 231 "/home/olivier/projects/chill/src/v4d/modules/CHILL_terrain/assets/shaders/voxel.glsl"
 
 bool IsValidVoxel(in ivec3 iPos, in vec3 gridOffset) {
 	if (iPos.x < 0 || iPos.y < 0 || iPos.z < 0) return false;
