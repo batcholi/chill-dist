@@ -796,12 +796,11 @@ BUFFER_REFERENCE_STRUCT_READONLY(16) TLASInstance {
 };
 STATIC_ASSERT_ALIGNED16_SIZE(TLASInstance, 64)
 
-
 BUFFER_REFERENCE_STRUCT(16) GlobalIllumination {
 	aligned_f32vec4 radiance;
 	aligned_int64_t frameIndex;
+	aligned_uint32_t iteration;
 	aligned_int32_t lock;
-	aligned_int32_t _unused;
 };
 STATIC_ASSERT_ALIGNED16_SIZE(GlobalIllumination, 32);
 
@@ -819,7 +818,9 @@ struct RendererData {
 	aligned_i32vec3 worldOrigin;
 	aligned_uint32_t globalIlluminationTableCount;
 	
+	aligned_uint32_t giIteration;
 	aligned_int32_t giMaxSamples;
+	aligned_int32_t fogSteps;
 };
 #line 10 "/home/olivier/projects/chill/src/v4d/modules/V4D_rtcubes/base.glsl"
 const float EPSILON = 0.00001;
@@ -1040,6 +1041,10 @@ GlobalIllumination GetGi(uint index) {
 	return renderer.globalIllumination[index];
 }
 
+vec3 GetSkyColor(in vec3 dir) {
+	return renderer.skyLightColor * mix(vec3(0.7,0.7,1.0), abs(dir), 0.5) * 2;
+}
+
 // Debug Stuff
 uint64_t startTime = clockARB();
 #define WRITE_DEBUG_TIME {imageStore(img_debug, ivec2(gl_LaunchIDEXT.xy), vec4(Heatmap(float(double(clockARB() - startTime) / double(500000.0))), 1));}
@@ -1054,7 +1059,7 @@ void main() {
 	ray.hitDistance = -1;
 	ray.reflection = 0;
 	ray.normal = vec3(0,0,0);
-	ray.color = vec4(renderer.skyLightColor * mix(vec3(0.7,0.7,1.0), abs(gl_WorldRayDirectionEXT), 0.5) * 2, 1.0);
+	ray.color = vec4(GetSkyColor(gl_WorldRayDirectionEXT), 1.0);
 	ray.index = uvec2(0,0);
 	ray.tlasInstanceIndex = -1;
 	if (ray.bounces == 0) {
@@ -1064,9 +1069,9 @@ void main() {
 		ray.color.rgb += ray.color.rgb * pow(smoothstep(1-sunGlowAngle, 1.002, dot(gl_WorldRayDirectionEXT, renderer.sunDir)), 2) * 0.5;
 		ray.color.rgb += ray.color.rgb * smoothstep(1-sunSolidAngle, 1, dot(gl_WorldRayDirectionEXT, renderer.sunDir)) * 100;
 	}
-	if (dot(gl_WorldRayDirectionEXT, vec3(0,1,0)) < 0) {
-		ray.color.rgb *= vec3(0.3);
-	}
+	// if (dot(gl_WorldRayDirectionEXT, vec3(0,1,0)) < 0) {
+	// 	ray.color.rgb *= vec3(0.3);
+	// }
 }
 
 ///////////////////////////////////////////////////////////////////////////////////

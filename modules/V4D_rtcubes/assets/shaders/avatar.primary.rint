@@ -796,12 +796,11 @@ BUFFER_REFERENCE_STRUCT_READONLY(16) TLASInstance {
 };
 STATIC_ASSERT_ALIGNED16_SIZE(TLASInstance, 64)
 
-
 BUFFER_REFERENCE_STRUCT(16) GlobalIllumination {
 	aligned_f32vec4 radiance;
 	aligned_int64_t frameIndex;
+	aligned_uint32_t iteration;
 	aligned_int32_t lock;
-	aligned_int32_t _unused;
 };
 STATIC_ASSERT_ALIGNED16_SIZE(GlobalIllumination, 32);
 
@@ -819,7 +818,9 @@ struct RendererData {
 	aligned_i32vec3 worldOrigin;
 	aligned_uint32_t globalIlluminationTableCount;
 	
+	aligned_uint32_t giIteration;
 	aligned_int32_t giMaxSamples;
+	aligned_int32_t fogSteps;
 };
 #line 10 "/home/olivier/projects/chill/src/v4d/modules/V4D_rtcubes/base.glsl"
 const float EPSILON = 0.00001;
@@ -1038,6 +1039,10 @@ uint GetGiIndex(in ivec3 worldPosition) {
 }
 GlobalIllumination GetGi(uint index) {
 	return renderer.globalIllumination[index];
+}
+
+vec3 GetSkyColor(in vec3 dir) {
+	return renderer.skyLightColor * mix(vec3(0.7,0.7,1.0), abs(dir), 0.5) * 2;
 }
 
 // Debug Stuff
