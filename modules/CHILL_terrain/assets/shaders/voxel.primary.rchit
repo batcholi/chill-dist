@@ -1050,6 +1050,88 @@ uint64_t startTime = clockARB();
 #define WRITE_DEBUG_TIME {imageStore(img_debug, ivec2(gl_LaunchIDEXT.xy), vec4(Heatmap(float(double(clockARB() - startTime) / double(500000.0))), 1));}
 #define traceRayEXT {if (camera.debugViewMode == RENDERER_DEBUG_MODE_TRACE_RAY_COUNT) imageStore(img_debug, ivec2(gl_LaunchIDEXT.xy), vec4(0,0,0, imageLoad(img_debug, ivec2(gl_LaunchIDEXT.xy)).a + 1));} traceRayEXT
 
+#ifdef SHADER_RCHIT
+	#define SUN_LIGHT_SOLID_ANGLE 0.01
+	#define FOG_DISTANCE_FACTOR 300
+	
+	layout(set = 1, binding = SET1_BINDING_TLAS) uniform accelerationStructureEXT tlas;
+	uint seed = InitRandomSeed(InitRandomSeed(gl_LaunchIDEXT.x, gl_LaunchIDEXT.y), uint(camera.frameIndex));
+	
+	vec3 GetDirectLighting(in vec3 albedo, in float diffuseMultiplier, in float specularMultiplier, in float specularPower) {
+		const vec3 ambient = vec3(0);// albedo * 0.03;
+		if (OPTION_DIRECT_LIGHTING) {
+			if (ray.bounces < 2) {// Direct Lighting (must apply this for diffuse materials only)
+				vec3 shadowRayDir = normalize(renderer.sunDir + vec3(0.0012765f));
+				if (OPTION_SOFT_SHADOWS) {
+					float pointRadius = SUN_LIGHT_SOLID_ANGLE * RandomFloat(seed);
+					float pointAngle = RandomFloat(seed) * 2.0 * 3.1415926535;
+					vec2 diskPoint = vec2(pointRadius * cos(pointAngle), pointRadius * sin(pointAngle));
+					vec3 lightTangent = normalize(cross(shadowRayDir, ray.normal));
+					vec3 lightBitangent = normalize(cross(lightTangent, shadowRayDir));
+					shadowRayDir = normalize(shadowRayDir + diskPoint.x * lightTangent + diskPoint.y * lightBitangent);
+				}
+				if (dot(shadowRayDir, ray.normal) > 0.001) {
+					vec3 surfacePosition = ray.nextPosition + ray.normal * 0.001;
+					vec3 directLighting = vec3(1);
+					RayPayload originalRay = ray;
+					for (;;) {
+						if (dot(directLighting,directLighting) < 0.00001) {
+							directLighting = ambient;
+							break;
+						}
+						ray.hitDistance = 0;
+						++ray.bounces;
+						traceRayEXT(tlas, 0, RENDERABLE_ALL, 0/*rayType*/, SBT_HITGROUPS_PER_GEOMETRY/*nbRayTypes*/, 0/*missIndex*/, surfacePosition, camera.zNear, shadowRayDir, camera.zFar, RAY_PAYLOAD_PRIMARY);
+						if (ray.hitDistance == -1) {
+							vec3 diffuse = albedo * renderer.skyLightColor * dot(renderer.sunDir, originalRay.normal) * diffuseMultiplier;
+							vec3 specular = renderer.skyLightColor * pow(clamp(dot(originalRay.normal, normalize(renderer.sunDir - gl_WorldRayDirectionEXT)), 0, 1), specularPower) * specularMultiplier;
+							directLighting *= diffuse + specular;
+							break;
+						} else if (ray.color.a < 1.0) {
+							// Diffuse (within transparent non-air medium, like water or glass)
+							directLighting *= 1-ray.color.a;
+							surfacePosition = ray.nextPosition + shadowRayDir * 0.001;
+						} else {
+							directLighting = ambient;
+							break;
+						}
+					}
+					ray = originalRay;
+					return directLighting;
+				}
+			}
+		}
+		return ambient;
+	}
+	
+	void ApplyFog() {
+		if (ray.bounces == 0) {
+			if (renderer.fogSteps > 0) {
+				// Volumetric Fog (with God-Rays)
+				const float fogAmount = pow(min(1, ray.hitDistance / FOG_DISTANCE_FACTOR), 1.4) / renderer.fogSteps;
+				RayPayload originalRay = ray;
+				++ray.bounces;
+				for (int i = 0; i < renderer.fogSteps; ++i) {
+					float dist = RandomFloat(seed) * originalRay.hitDistance;
+					vec3 worldPos = gl_WorldRayOriginEXT + gl_WorldRayDirectionEXT * dist;
+					ray.hitDistance = 0;
+					traceRayEXT(tlas, 0, RENDERABLE_ALL, 0/*rayType*/, SBT_HITGROUPS_PER_GEOMETRY/*nbRayTypes*/, 0/*missIndex*/, worldPos, 0, normalize(renderer.sunDir + vec3(0.0012765f)), camera.zFar, RAY_PAYLOAD_PRIMARY);
+					if (ray.hitDistance == -1) {
+						originalRay.color.rgb = mix(originalRay.color.rgb, renderer.skyLightColor, fogAmount);
+					} else {
+						originalRay.color.rgb = mix(originalRay.color.rgb, vec3(0), fogAmount);
+					}
+				}
+				ray = originalRay;
+			} else {
+				// Basic Fog
+				ray.color.rgb = mix(ray.color.rgb, renderer.skyLightColor, pow(min(1, ray.hitDistance / FOG_DISTANCE_FACTOR), 1.4));
+			}
+		}
+	}
+	
+#endif
+
 #endif // _RTCUBES_SHADER_BASE_INCLUDED_
 #line 2 "/home/olivier/projects/chill/src/v4d/modules/CHILL_terrain/assets/shaders/voxel.glsl"
 
@@ -1409,16 +1491,10 @@ STATIC_ASSERT_ALIGNED16_SIZE(ChunkData, 16);
 	#define GI_SAMPLES_MAX renderer.giMaxSamples // max samples to take in different direction, per gi bounce, when near (THIS COULD BE A GRAPHICS SETTING THAT GOES UP TO 100)
 	#define GI_SAMPLES_FALLOFF_START_DISTANCE 10
 	#define GI_SAMPLES_FALLOFF_END_DISTANCE 100
-	#define DI_BOUNCES 2 // number of bounces in which we trace for Direct Lighting
 	#define MAX_ACCUMULATION GI_SAMPLES_MAX * 16
 	#define ACCUMULATOR_MAX_FRAME_INDEX_DIFF 1000
-	#define SUN_LIGHT_SOLID_ANGLE 0.01
 
-	layout(set = 1, binding = SET1_BINDING_TLAS) uniform accelerationStructureEXT tlas;
-	
-	uint seed = InitRandomSeed(InitRandomSeed(gl_LaunchIDEXT.x, gl_LaunchIDEXT.y), uint(camera.frameIndex));
-	
-	vec3 ApplyAmbientVoxelLighting(in vec3 albedo, in ivec3 voxelPosInChunk, in vec3 posInVoxel) {
+	vec3 GetAmbientVoxelLighting(in vec3 albedo, in ivec3 voxelPosInChunk, in vec3 posInVoxel) {
 		const int nbAdjacentSides = 18;
 		const ivec3 adjacentSides[nbAdjacentSides] = {
 			ivec3( 0, 0, 1),
@@ -1598,53 +1674,6 @@ STATIC_ASSERT_ALIGNED16_SIZE(ChunkData, 16);
 		return vec3(0);
 	}
 
-	vec3 ApplyDirectLighting(in vec3 albedo, in float diffuseMultiplier, in float specularMultiplier, in float specularPower) {
-		const vec3 ambient = vec3(0);// albedo * 0.03;
-		if (OPTION_DIRECT_LIGHTING) {
-			if (ray.bounces < DI_BOUNCES) {// Direct Lighting (must apply this for diffuse materials only)
-				vec3 shadowRayDir = normalize(renderer.sunDir + vec3(0.0012765f));
-				if (OPTION_SOFT_SHADOWS) {
-					float pointRadius = SUN_LIGHT_SOLID_ANGLE * RandomFloat(seed);
-					float pointAngle = RandomFloat(seed) * 2.0 * 3.1415926535;
-					vec2 diskPoint = vec2(pointRadius * cos(pointAngle), pointRadius * sin(pointAngle));
-					vec3 lightTangent = normalize(cross(shadowRayDir, ray.normal));
-					vec3 lightBitangent = normalize(cross(lightTangent, shadowRayDir));
-					shadowRayDir = normalize(shadowRayDir + diskPoint.x * lightTangent + diskPoint.y * lightBitangent);
-				}
-				if (dot(shadowRayDir, ray.normal) > 0.001) {
-					vec3 surfacePosition = ray.nextPosition + ray.normal * 0.001;
-					vec3 directLighting = vec3(1);
-					RayPayload originalRay = ray;
-					for (;;) {
-						if (dot(directLighting,directLighting) < 0.00001) {
-							directLighting = ambient;
-							break;
-						}
-						ray.hitDistance = 0;
-						++ray.bounces;
-						traceRayEXT(tlas, 0, RENDERABLE_ALL, 0/*rayType*/, SBT_HITGROUPS_PER_GEOMETRY/*nbRayTypes*/, 0/*missIndex*/, surfacePosition, camera.zNear, shadowRayDir, camera.zFar, RAY_PAYLOAD_PRIMARY);
-						if (ray.hitDistance == -1) {
-							vec3 diffuse = albedo * renderer.skyLightColor * dot(renderer.sunDir, originalRay.normal) * diffuseMultiplier;
-							vec3 specular = renderer.skyLightColor * pow(clamp(dot(originalRay.normal, normalize(renderer.sunDir - gl_WorldRayDirectionEXT)), 0, 1), specularPower) * specularMultiplier;
-							directLighting *= diffuse + specular;
-							break;
-						} else if (ray.color.a < 1.0) {
-							// Diffuse (within transparent non-air medium, like water or glass)
-							directLighting *= 1-ray.color.a;
-							surfacePosition = ray.nextPosition + shadowRayDir * 0.001;
-						} else {
-							directLighting = ambient;
-							break;
-						}
-					}
-					ray = originalRay;
-					return directLighting;
-				}
-			}
-		}
-		return ambient;
-	}
-	
 #endif
 
 /////////////////////////////////////////////////////////////
@@ -1655,7 +1684,7 @@ hitAttributeEXT hit {
 };
 
 
-#line 408 "/home/olivier/projects/chill/src/v4d/modules/CHILL_terrain/assets/shaders/voxel.glsl"
+#line 355 "/home/olivier/projects/chill/src/v4d/modules/CHILL_terrain/assets/shaders/voxel.glsl"
 
 void main() {
 	CLOSEST_HIT_BEGIN
@@ -1701,8 +1730,11 @@ void main() {
 		
 		// ApplyFresnelReflection(1.45);
 		
-		ray.color.rgb = ApplyAmbientVoxelLighting(ray.color.rgb, iPos, posInVoxel) + ApplyDirectLighting(ray.color.rgb, 1.0/*diffuseMultiplier*/, 0.5/*specularMultiplier*/, 10.0/*specularPower*/);
+		// Lighting
+		ray.color.rgb = GetAmbientVoxelLighting(ray.color.rgb, iPos, posInVoxel) + GetDirectLighting(ray.color.rgb, 1.0/*diffuseMultiplier*/, 0.5/*specularMultiplier*/, 10.0/*specularPower*/);
 		
+		ApplyFog();
+	
 		if (ray.bounces == 0) {
 			
 			// Aim Wireframe
@@ -1716,7 +1748,6 @@ void main() {
 			}
 			
 			const ivec2 imgCoords = ivec2(gl_LaunchIDEXT.xy);
-
 			if (camera.debugViewMode == RENDERER_DEBUG_MODE_UVS) {
 				imageStore(img_debug, imgCoords, vec4(BOX_COORD, 0, 1));
 			}
@@ -1724,25 +1755,4 @@ void main() {
 		}
 		
 	CLOSEST_HIT_END
-
-	// Fog
-	if (ray.bounces == 0 && renderer.fogSteps > 0) {
-		// ray.color.rgb = mix(ray.color.rgb, GetSkyColor(gl_WorldRayDirectionEXT), pow(ray.hitDistance / 300, 2)); // Simple fog
-		const float fogAmount = min(1, pow(ray.hitDistance / 400, 1)) / renderer.fogSteps;
-		RayPayload originalRay = ray;
-		++ray.bounces;
-		for (int i = 0; i < renderer.fogSteps; ++i) {
-			float dist = RandomFloat(seed) * originalRay.hitDistance;
-			vec3 worldPos = gl_WorldRayOriginEXT + gl_WorldRayDirectionEXT * dist;
-			ray.hitDistance = 0;
-			traceRayEXT(tlas, 0, RENDERABLE_ALL, 0/*rayType*/, SBT_HITGROUPS_PER_GEOMETRY/*nbRayTypes*/, 0/*missIndex*/, worldPos, 0, normalize(renderer.sunDir + vec3(0.0012765f)), camera.zFar, RAY_PAYLOAD_PRIMARY);
-			if (ray.hitDistance == -1) {
-				originalRay.color.rgb = mix(originalRay.color.rgb, renderer.skyLightColor, fogAmount);
-			} else {
-				originalRay.color.rgb = mix(originalRay.color.rgb, vec3(0), fogAmount);
-			}
-		}
-		ray = originalRay;
-	}
-	
 }
