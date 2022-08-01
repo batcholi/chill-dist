@@ -1,0 +1,4 @@
+*.log
+**/cache/*
+*.watch.sh
+imgui.ini
