@@ -1347,7 +1347,7 @@ uint64_t startTime = clockARB();
 #line 15 "/home/olivier/projects/chill/src/v4d/core/v4d.h"
 #line 3 "/home/olivier/projects/chill/src/v4d/modules/CHILL_terrain/assets/shaders/blocks/../voxel.hh"
 
-#if 1 // 8-bit indexing
+#if 0 // 8-bit indexing
 	/* 
 	TerrainStack (Renderable)
 		a Stack consists of 256 chunks vertically
@@ -1393,24 +1393,28 @@ uint64_t startTime = clockARB();
 #endif
 #define VOXEL_CHUNK_LOD_LIMIT 7 // 0-7 (must fit in 3 bits)
 #define VOXEL_CHUNK_LOD_DISTANCE(lod) (uint(VOXEL_CHUNK_LOD_START_DISTANCE) << uint(lod))
-#define VOXEL_STACK_HEIGHT (CHUNKS_Y*VOXELS_Y)
 #define VOXEL_GRID_SIZE_HD 4
 #define VOXELS_XZ (1 << VOXEL_INDEX_BITS_XZ)
 #define VOXELS_Y (1 << VOXEL_INDEX_BITS_Y)
 #define VOXELS_X VOXELS_XZ
 #define VOXELS_Z VOXELS_XZ
-#define VOXELS_PER_CHUNK (uint32_t(VOXELS_X)*VOXELS_Y*VOXELS_Z)
 #define CHUNKS_Y (VOXELS_TOTAL_HEIGHT / VOXELS_Y)
+#define VOXELS_PER_CHUNK (VOXELS_X*VOXELS_Y*VOXELS_Z)
+#define VOXEL_STACK_HEIGHT (CHUNKS_Y*VOXELS_Y)
 #if CHUNKS_Y <= 256
 	#define ChunkIndex uint8_t
 #else
 	#define ChunkIndex uint16_t
 #endif
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
 #define VOXEL_EMPTY 0
 #define VOXEL_FULL 0xfffffffffffffffful
 
 
 #ifdef __cplusplus // C++
+	static_assert(sizeof(VOXEL_INDEX_TYPE) == 2);
 	union VoxelIndex {
 		VOXEL_INDEX_TYPE index;
 		struct {
@@ -1436,6 +1440,12 @@ uint64_t startTime = clockARB();
 			assert(p.z < VOXELS_Z);
 			assert(p.y < VOXELS_Y);
 			assert(index < VOXELS_PER_CHUNK);
+			assert(p.x == x);
+			assert(p.y == y);
+			assert(p.z == z);
+			#if VOXEL_INDEX_PADDING > 0
+				assert(_ == 0);
+			#endif
 		}
 		operator glm::ivec3() const noexcept {
 			return {x,y,z};
@@ -1462,9 +1472,9 @@ uint64_t startTime = clockARB();
 	#define VoxelIndexHD(x,y,z) (uint8_t(x) | (uint8_t(z) << 2) | (uint8_t(y) << 4))
 	#define VoxelFillBitHD(iPos) (1ul << VoxelIndexHD(iPos.x, iPos.y, iPos.z))
 	#define VoxelIndex_iPos(index) ivec3(\
-		(index & ((1u << VOXEL_INDEX_BITS_XZ) - 1)),\
-		((index & (((1u << VOXEL_INDEX_BITS_Y) - 1) << (VOXEL_INDEX_BITS_XZ+VOXEL_INDEX_BITS_XZ))) >> (VOXEL_INDEX_BITS_XZ + VOXEL_INDEX_BITS_XZ)),\
-		((index & (((1u << VOXEL_INDEX_BITS_XZ) - 1) << VOXEL_INDEX_BITS_XZ)) >> VOXEL_INDEX_BITS_XZ)\
+		int32_t(uint32_t(index) & ((1u << VOXEL_INDEX_BITS_XZ) - 1)),\
+		int32_t((uint32_t(index) & (((1u << VOXEL_INDEX_BITS_Y) - 1) << (VOXEL_INDEX_BITS_XZ+VOXEL_INDEX_BITS_XZ))) >> (VOXEL_INDEX_BITS_XZ + VOXEL_INDEX_BITS_XZ)),\
+		int32_t((uint32_t(index) & (((1u << VOXEL_INDEX_BITS_XZ) - 1) << VOXEL_INDEX_BITS_XZ)) >> VOXEL_INDEX_BITS_XZ)\
 	)
 #endif
 

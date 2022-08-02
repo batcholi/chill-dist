@@ -1346,7 +1346,7 @@ uint64_t startTime = clockARB();
 #line 15 "/home/olivier/projects/chill/src/v4d/core/v4d.h"
 #line 3 "/home/olivier/projects/chill/src/v4d/modules/CHILL_terrain/assets/shaders/voxel.hh"
 
-#if 1 // 8-bit indexing
+#if 0 // 8-bit indexing
 	/* 
 	TerrainStack (Renderable)
 		a Stack consists of 256 chunks vertically
@@ -1392,24 +1392,28 @@ uint64_t startTime = clockARB();
 #endif
 #define VOXEL_CHUNK_LOD_LIMIT 7 // 0-7 (must fit in 3 bits)
 #define VOXEL_CHUNK_LOD_DISTANCE(lod) (uint(VOXEL_CHUNK_LOD_START_DISTANCE) << uint(lod))
-#define VOXEL_STACK_HEIGHT (CHUNKS_Y*VOXELS_Y)
 #define VOXEL_GRID_SIZE_HD 4
 #define VOXELS_XZ (1 << VOXEL_INDEX_BITS_XZ)
 #define VOXELS_Y (1 << VOXEL_INDEX_BITS_Y)
 #define VOXELS_X VOXELS_XZ
 #define VOXELS_Z VOXELS_XZ
-#define VOXELS_PER_CHUNK (uint32_t(VOXELS_X)*VOXELS_Y*VOXELS_Z)
 #define CHUNKS_Y (VOXELS_TOTAL_HEIGHT / VOXELS_Y)
+#define VOXELS_PER_CHUNK (VOXELS_X*VOXELS_Y*VOXELS_Z)
+#define VOXEL_STACK_HEIGHT (CHUNKS_Y*VOXELS_Y)
 #if CHUNKS_Y <= 256
 	#define ChunkIndex uint8_t
 #else
 	#define ChunkIndex uint16_t
 #endif
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
 #define VOXEL_EMPTY 0
 #define VOXEL_FULL 0xfffffffffffffffful
 
 
 #ifdef __cplusplus // C++
+	static_assert(sizeof(VOXEL_INDEX_TYPE) == 2);
 	union VoxelIndex {
 		VOXEL_INDEX_TYPE index;
 		struct {
@@ -1435,6 +1439,12 @@ uint64_t startTime = clockARB();
 			assert(p.z < VOXELS_Z);
 			assert(p.y < VOXELS_Y);
 			assert(index < VOXELS_PER_CHUNK);
+			assert(p.x == x);
+			assert(p.y == y);
+			assert(p.z == z);
+			#if VOXEL_INDEX_PADDING > 0
+				assert(_ == 0);
+			#endif
 		}
 		operator glm::ivec3() const noexcept {
 			return {x,y,z};
@@ -1461,9 +1471,9 @@ uint64_t startTime = clockARB();
 	#define VoxelIndexHD(x,y,z) (uint8_t(x) | (uint8_t(z) << 2) | (uint8_t(y) << 4))
 	#define VoxelFillBitHD(iPos) (1ul << VoxelIndexHD(iPos.x, iPos.y, iPos.z))
 	#define VoxelIndex_iPos(index) ivec3(\
-		(index & ((1u << VOXEL_INDEX_BITS_XZ) - 1)),\
-		((index & (((1u << VOXEL_INDEX_BITS_Y) - 1) << (VOXEL_INDEX_BITS_XZ+VOXEL_INDEX_BITS_XZ))) >> (VOXEL_INDEX_BITS_XZ + VOXEL_INDEX_BITS_XZ)),\
-		((index & (((1u << VOXEL_INDEX_BITS_XZ) - 1) << VOXEL_INDEX_BITS_XZ)) >> VOXEL_INDEX_BITS_XZ)\
+		int32_t(uint32_t(index) & ((1u << VOXEL_INDEX_BITS_XZ) - 1)),\
+		int32_t((uint32_t(index) & (((1u << VOXEL_INDEX_BITS_Y) - 1) << (VOXEL_INDEX_BITS_XZ+VOXEL_INDEX_BITS_XZ))) >> (VOXEL_INDEX_BITS_XZ + VOXEL_INDEX_BITS_XZ)),\
+		int32_t((uint32_t(index) & (((1u << VOXEL_INDEX_BITS_XZ) - 1) << VOXEL_INDEX_BITS_XZ)) >> VOXEL_INDEX_BITS_XZ)\
 	)
 #endif
 
@@ -1535,7 +1545,7 @@ STATIC_ASSERT_ALIGNED16_SIZE(ChunkData, 16);
 	#define GI_SAMPLES_MAX (isUnderWater? (renderer.giMaxSamples/4) : renderer.giMaxSamples) // max samples to take in different direction, per gi bounce, when near (THIS COULD BE A GRAPHICS SETTING THAT GOES UP TO 100)
 	#define GI_SAMPLES_FALLOFF_START_DISTANCE 2
 	#define GI_SAMPLES_FALLOFF_END_DISTANCE 50
-	#define MAX_ACCUMULATION 256
+	#define MAX_ACCUMULATION 64
 	#define ACCUMULATOR_MAX_FRAME_INDEX_DIFF 1000
 
 	vec3 GetAmbientVoxelLighting(in vec3 albedo, in ivec3 voxelPosInChunk, in vec3 posInVoxel) {
@@ -1543,7 +1553,7 @@ STATIC_ASSERT_ALIGNED16_SIZE(ChunkData, 16);
 		bool isUnderWater = (flags & RT_PAYLOAD_FLAG_UNDERWATER) != 0;
 		bool isGiRay = (flags & RT_PAYLOAD_FLAG_GI_RAY) != 0;
 		bool isFogRay = (flags & RT_PAYLOAD_FLAG_FOG_RAY) != 0;
-		if ((flags & RT_PAYLOAD_FLAG_FOG_RAY) != 0) return vec3(0);
+		if (isFogRay) return vec3(0);
 		
 		const int nbAdjacentSides = 18;
 		const ivec3 adjacentSides[nbAdjacentSides] = {
@@ -1584,7 +1594,7 @@ STATIC_ASSERT_ALIGNED16_SIZE(ChunkData, 16);
 			
 			if (ray.bounces < maxBounces) {
 				
-				if (!isGiRay && !isFogRay && !isUnderWater) {// Set Current Voxel GI Darker if opaque
+				if (!isGiRay && !isUnderWater) {// Set Current Voxel GI Darker if opaque
 					if (IsVoxel(chunkID, voxelPosInChunk) && ChunkData(chunkID).voxels.fill[VoxelIndex(voxelPosInChunk.x, voxelPosInChunk.y, voxelPosInChunk.z)] == VOXEL_FULL) {
 						uint giIndexCurrent = GetGiIndex(ivec3(round(ray.nextPosition - ray.normal * 0.5)));
 						int lock = atomicExchange(GetGi(giIndexCurrent).lock, 1);
@@ -1596,7 +1606,7 @@ STATIC_ASSERT_ALIGNED16_SIZE(ChunkData, 16);
 							GetGi(giIndexCurrent).frameIndex = int64_t(camera.frameIndex);
 							GetGi(giIndexCurrent).iteration = renderer.giIteration;
 							vec3 l = GetGi(giIndexCurrent).radiance.rgb;
-							GetGi(giIndexCurrent).radiance = vec4(mix(l, vec3(0), min(1, 16.0 / accumulation)), accumulation);
+							GetGi(giIndexCurrent).radiance = vec4(mix(l, vec3(0), min(1, 1.0 / accumulation)), accumulation);
 							GetGi(giIndexCurrent).lock = 0;
 						}
 					}
@@ -1606,13 +1616,10 @@ STATIC_ASSERT_ALIGNED16_SIZE(ChunkData, 16);
 				if (lock == 0) {
 					float adjacentMixRatio = 0.2;
 					
-					float accumulation;
-					if (!isGiRay && !isFogRay) {
-						accumulation = min(GetGi(giIndex).radiance.a + 1, MAX_ACCUMULATION);
-						if (GetGi(giIndex).iteration != renderer.giIteration || abs(GetGi(giIndex).frameIndex - int64_t(camera.frameIndex)) > ACCUMULATOR_MAX_FRAME_INDEX_DIFF) {
-							accumulation = 1;
-							adjacentMixRatio = 1;
-						}
+					float accumulation = clamp(GetGi(giIndex).radiance.a + 1, 1, MAX_ACCUMULATION);
+					if (GetGi(giIndex).iteration != renderer.giIteration || abs(GetGi(giIndex).frameIndex - int64_t(camera.frameIndex)) > ACCUMULATOR_MAX_FRAME_INDEX_DIFF) {
+						accumulation = 1;
+						adjacentMixRatio = 1;
 					}
 					
 					RayPayload originalRay = ray;
@@ -1638,9 +1645,14 @@ STATIC_ASSERT_ALIGNED16_SIZE(ChunkData, 16);
 					}
 					if (!isGiRay) UNSET_RT_PAYLOAD_FLAG(RT_PAYLOAD_FLAG_GI_RAY)
 					
+					// Protect the GI buffer from NaN values
+					if (isnan(color.r) || isnan(color.g) || isnan(color.b)) {
+						color = vec3(0);
+					}
+					
 					ray = originalRay;
 					
-					if (!isGiRay && !isFogRay) {
+					if (!isGiRay) {
 						GetGi(giIndex).frameIndex = int64_t(camera.frameIndex);
 						GetGi(giIndex).iteration = renderer.giIteration;
 						vec3 l = GetGi(giIndex).radiance.rgb;
@@ -1677,7 +1689,7 @@ STATIC_ASSERT_ALIGNED16_SIZE(ChunkData, 16);
 		}
 		
 		// Apply indirect lighting
-		if (OPTION_INDIRECT_LIGHTING && !isGiRay && !isFogRay) {
+		if (OPTION_INDIRECT_LIGHTING && !isGiRay) {
 			ivec3 facingVoxelPos = voxelPosInChunk + ivec3(round(ray.normal));
 			vec4 lighting;
 			if (GetGi(giIndex).iteration == renderer.giIteration && abs(GetGi(giIndex).frameIndex - int64_t(camera.frameIndex)) < ACCUMULATOR_MAX_FRAME_INDEX_DIFF) {
@@ -1741,7 +1753,7 @@ hitAttributeEXT hit {
 };
 
 
-#line 220 "/home/olivier/projects/chill/src/v4d/modules/CHILL_terrain/assets/shaders/voxel.glsl"
+#line 222 "/home/olivier/projects/chill/src/v4d/modules/CHILL_terrain/assets/shaders/voxel.glsl"
 
 bool IsValidVoxel(in ivec3 iPos, in vec3 gridOffset) {
 	if (iPos.x < 0 || iPos.y < 0 || iPos.z < 0) return false;
@@ -1803,7 +1815,7 @@ void main() {
 	if (T1 < gl_RayTmaxEXT && T2 > T1 && T2 > gl_RayTminEXT) {
 		ChunkVoxelData voxelData = chunk.voxels;
 		if (voxelData.voxelSize == 0) return;
-		if (voxelData.voxelSize == 1 && ((flags & (RT_PAYLOAD_FLAG_GI_RAY|RT_PAYLOAD_FLAG_FOG_RAY)) == 0)) {
+		if (voxelData.voxelSize == 1 /*&& ((flags & (RT_PAYLOAD_FLAG_GI_RAY|RT_PAYLOAD_FLAG_FOG_RAY)) == 0)*/) {
 			const float startT = max(gl_RayTminEXT, T1 - EPSILON * voxelData.voxelSize * 10);
 			const float endT   = min(gl_RayTmaxEXT, T2 + EPSILON * voxelData.voxelSize * 10);
 			const bool enableHdVoxels = voxelData.voxelSize == 1 && startT < maxHdVoxelDistance;

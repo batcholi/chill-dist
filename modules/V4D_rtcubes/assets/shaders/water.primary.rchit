@@ -1300,12 +1300,14 @@ void ApplyUnderwaterFog() {
 
 	ray.color.rgb = mix(ray.color.rgb, vec3(0), pow(clamp(ray.hitDistance / MAX_WATER_DEPTH, 0, 1), 0.5));
 	
-	if (renderer.fogSteps > 0 && ray.bounces < RAY_MAX_RECURSION) {
-		const float fogAmount = fogStrength / renderer.fogSteps;
+	uint steps = max(1, renderer.fogSteps);
+	
+	if (ray.bounces < RAY_MAX_RECURSION) {
+		const float fogAmount = fogStrength / steps;
 		RayPayload originalRay = ray;
 		++ray.bounces;
 		SET_RT_PAYLOAD_FLAG(RT_PAYLOAD_FLAG_FOG_RAY)
-		for (int i = 0; i < renderer.fogSteps; ++i) {
+		for (int i = 0; i < steps; ++i) {
 			float dist = RandomFloat(seed) * originalRay.hitDistance;
 			vec3 worldPos = origin + dir * dist;
 			ray.hitDistance = 0;

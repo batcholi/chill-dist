@@ -1273,7 +1273,7 @@ float SimplexFractal(vec3 pos, int octaves) {
 #line 4 "/home/olivier/projects/chill/src/v4d/modules/V4D_rtcubes/assets/shaders/raytracing.glsl"
 
 
-#line 232 "/home/olivier/projects/chill/src/v4d/modules/V4D_rtcubes/assets/shaders/raytracing.glsl"
+#line 231 "/home/olivier/projects/chill/src/v4d/modules/V4D_rtcubes/assets/shaders/raytracing.glsl"
 void main() {
 	CLOSEST_HIT_BEGIN
 		CLOSEST_HIT_BOX_INTERSECTION_COMPUTE_NORMAL

@@ -1300,10 +1300,9 @@ void main() {
 		const float moonSolidAngle = 0.0005;
 		const vec3 moonRelPos = -renderer.sunDir - gl_WorldRayDirectionEXT;
 		ray.color.rgb += pow(smoothstep(1-moonSolidAngle, 1, dot(gl_WorldRayDirectionEXT, -renderer.sunDir)), 0.25) * pow(SimplexFractal(moonRelPos*32+2.516, 3)*0.4+0.5, 1.5);
+		// Sunset
+		ray.color.rgb += sunColor * sunset * pow(clamp(dot(gl_WorldRayDirectionEXT, renderer.sunDir), 0, 1), 2) * pow(1-abs(dot(gl_WorldRayDirectionEXT, vec3(0,1,0))), 4);
 	}
-	
-	// Sunset
-	ray.color.rgb += sunColor * sunset * pow(clamp(dot(gl_WorldRayDirectionEXT, renderer.sunDir), 0, 1), 2) * pow(1-abs(dot(gl_WorldRayDirectionEXT, vec3(0,1,0))), 4);
 }
 
 ///////////////////////////////////////////////////////////////////////////////////
