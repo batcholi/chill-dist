@@ -1410,8 +1410,11 @@ uint seed = InitRandomSeed(InitRandomSeed(gl_LaunchIDEXT.x, gl_LaunchIDEXT.y), u
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
 #define VOXEL_EMPTY 0
-#define VOXEL_FULL 0xfffffffffffffffful
-
+#ifdef _WIN32
+	#define VOXEL_FULL 0xffffffffffffffffull
+#else
+	#define VOXEL_FULL 0xfffffffffffffffful
+#endif
 
 #ifdef __cplusplus // C++
 	static_assert(sizeof(VOXEL_INDEX_TYPE) == 2);
