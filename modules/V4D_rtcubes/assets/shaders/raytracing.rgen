@@ -1057,9 +1057,10 @@ uint64_t startTime = clockARB();
 #define WATER_LEVEL renderer.waterLevel
 #define MAX_WATER_DEPTH renderer.waterMaxLightDepth
 
+uint seed = InitRandomSeed(InitRandomSeed(gl_LaunchIDEXT.x, gl_LaunchIDEXT.y), uint(camera.frameIndex));
+
 #if defined(SHADER_RCHIT) || defined(SHADER_RGEN)
 	layout(set = 1, binding = SET1_BINDING_TLAS) uniform accelerationStructureEXT tlas;
-	uint seed = InitRandomSeed(InitRandomSeed(gl_LaunchIDEXT.x, gl_LaunchIDEXT.y), uint(camera.frameIndex));
 
 	void ApplyFog(in vec3 origin, in vec3 dir) {
 		if ((RT_PAYLOAD_FLAGS & RT_PAYLOAD_FLAG_UNDERWATER) == 0) {
@@ -1332,7 +1333,7 @@ void main() {
 			while (reflection > 0.01) {
 				if (dot(reflectDirection, reflectDirection) == 0) break;
 				ray.hitDistance = 0;
-				++ray.bounces;
+				ray.bounces = 0;
 				traceRayEXT(tlas, 0, RENDERABLE_STANDARD, 0/*rayType*/, SBT_HITGROUPS_PER_GEOMETRY/*nbRayTypes*/, 0/*missIndex*/, rayPosition, cam.zNear, reflectDirection, cam.zFar, RAY_PAYLOAD_PRIMARY);
 				ApplyFog(rayPosition, reflectDirection);
 				color += (isBothTransparentAndReflective? vec3(1):color)*ray.color.rgb*reflection;

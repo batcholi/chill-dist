@@ -1057,9 +1057,10 @@ uint64_t startTime = clockARB();
 #define WATER_LEVEL renderer.waterLevel
 #define MAX_WATER_DEPTH renderer.waterMaxLightDepth
 
+uint seed = InitRandomSeed(InitRandomSeed(gl_LaunchIDEXT.x, gl_LaunchIDEXT.y), uint(camera.frameIndex));
+
 #if defined(SHADER_RCHIT) || defined(SHADER_RGEN)
 	layout(set = 1, binding = SET1_BINDING_TLAS) uniform accelerationStructureEXT tlas;
-	uint seed = InitRandomSeed(InitRandomSeed(gl_LaunchIDEXT.x, gl_LaunchIDEXT.y), uint(camera.frameIndex));
 
 	void ApplyFog(in vec3 origin, in vec3 dir) {
 		if ((RT_PAYLOAD_FLAGS & RT_PAYLOAD_FLAG_UNDERWATER) == 0) {
@@ -1545,7 +1546,7 @@ STATIC_ASSERT_ALIGNED16_SIZE(ChunkData, 16);
 	#define GI_SAMPLES_MAX (isUnderWater? (renderer.giMaxSamples/4) : renderer.giMaxSamples) // max samples to take in different direction, per gi bounce, when near (THIS COULD BE A GRAPHICS SETTING THAT GOES UP TO 100)
 	#define GI_SAMPLES_FALLOFF_START_DISTANCE 2
 	#define GI_SAMPLES_FALLOFF_END_DISTANCE 50
-	#define MAX_ACCUMULATION 64
+	#define MAX_ACCUMULATION 128
 	#define ACCUMULATOR_MAX_FRAME_INDEX_DIFF 1000
 
 	vec3 GetAmbientVoxelLighting(in vec3 albedo, in ivec3 voxelPosInChunk, in vec3 posInVoxel) {
@@ -1753,7 +1754,7 @@ hitAttributeEXT hit {
 };
 
 
-#line 375 "/home/olivier/projects/chill/src/v4d/modules/CHILL_terrain/assets/shaders/voxel.glsl"
+#line 374 "/home/olivier/projects/chill/src/v4d/modules/CHILL_terrain/assets/shaders/voxel.glsl"
 
 void main() {
 	CLOSEST_HIT_BEGIN
@@ -1832,7 +1833,7 @@ void main() {
 		
 		// Lighting and Albedo
 		vec3 lighting = GetDirectLighting(surface.color.rgb, surface.diffuse, surface.specular, 10/*specularPower*/);
-		if (dot(lighting,lighting) == 0) lighting += GetAmbientVoxelLighting(surface.color.rgb, iPos, surface.posInVoxel);
+		lighting += GetAmbientVoxelLighting(surface.color.rgb, iPos, surface.posInVoxel);
 		ray.color.rgb = mix(lighting, surface.color.rgb, clamp(surface.metallic, 0, 1));
 	
 		// Emission

@@ -1057,9 +1057,10 @@ uint64_t startTime = clockARB();
 #define WATER_LEVEL renderer.waterLevel
 #define MAX_WATER_DEPTH renderer.waterMaxLightDepth
 
+uint seed = InitRandomSeed(InitRandomSeed(gl_LaunchIDEXT.x, gl_LaunchIDEXT.y), uint(camera.frameIndex));
+
 #if defined(SHADER_RCHIT) || defined(SHADER_RGEN)
 	layout(set = 1, binding = SET1_BINDING_TLAS) uniform accelerationStructureEXT tlas;
-	uint seed = InitRandomSeed(InitRandomSeed(gl_LaunchIDEXT.x, gl_LaunchIDEXT.y), uint(camera.frameIndex));
 
 	void ApplyFog(in vec3 origin, in vec3 dir) {
 		if ((RT_PAYLOAD_FLAGS & RT_PAYLOAD_FLAG_UNDERWATER) == 0) {
