@@ -1288,7 +1288,7 @@ float WaterWaves(vec3 pos) {
 
 const float IndexOfRefraction = 1.33;
 
-#define WATER_COLOR (vec3(0.005,0.008,0.011) * renderer.skyLightColor)
+#define WATER_COLOR (vec3(0.003,0.005,0.011) * renderer.skyLightColor)
 #define WATER_OPACITY 0.3
 
 float waterLevel = AABB_MAX.y;
@@ -1317,7 +1317,7 @@ void ApplyUnderwaterFog() {
 			if (ray.hitDistance == -1) {
 				float underwaterDepth = waterLevel - worldPos.y;
 				float distanceToSurface = clamp(min(underwaterDepth/max(0.001, dot(renderer.sunDir, vec3(0,1,0))), camera.zFar), camera.zNear, camera.zFar);
-				vec3 color = mix(renderer.skyLightColor * WATER_OPACITY * WATER_OPACITY, fogColor, clamp(distanceToSurface / MAX_WATER_DEPTH, 0, 1)) * (1-clamp(underwaterDepth / MAX_WATER_DEPTH, 0, 1));
+				vec3 color = mix(WATER_COLOR, fogColor, clamp(distanceToSurface / MAX_WATER_DEPTH, 0, 1)) * (1-clamp(underwaterDepth / MAX_WATER_DEPTH, 0, 1));
 				originalRay.color.rgb = mix(originalRay.color.rgb, color, fogAmount * 0.5);
 			} else {
 				originalRay.color.rgb = mix(originalRay.color.rgb, vec3(0), fogAmount);

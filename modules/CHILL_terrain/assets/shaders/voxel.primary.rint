@@ -1547,13 +1547,13 @@ STATIC_ASSERT_ALIGNED16_SIZE(ChunkData, 16);
 	// Standard Lighting stuff
 	#define GI_2_BOUNCES_MAX_DISTANCE 100
 	#define GI_SAMPLES_MIN 1 // min samples to take in different direction, per gi bounce, when far
-	#define GI_SAMPLES_MAX (isUnderWater? (renderer.giMaxSamples/4) : renderer.giMaxSamples) // max samples to take in different direction, per gi bounce, when near (THIS COULD BE A GRAPHICS SETTING THAT GOES UP TO 100)
+	#define GI_SAMPLES_MAX renderer.giMaxSamples // max samples to take in different direction, per gi bounce, when near (THIS COULD BE A GRAPHICS SETTING THAT GOES UP TO 100)
 	#define GI_SAMPLES_FALLOFF_START_DISTANCE 5
 	#define GI_SAMPLES_FALLOFF_END_DISTANCE 25
 	#define GI_MIN_DISTANCE 0.1 // camera.zNear
 	#define GI_MAX_DISTANCE camera.zFar
-	#define MAX_ACCUMULATION 128
-	#define ACCUMULATOR_MAX_FRAME_INDEX_DIFF 500
+	#define MAX_ACCUMULATION 256
+	#define ACCUMULATOR_MAX_FRAME_INDEX_DIFF 50
 
 	vec3 GetAmbientVoxelLighting(in vec3 albedo, in ivec3 voxelPosInChunk, in vec3 posInVoxel) {
 		uint flags = RT_PAYLOAD_FLAGS;
@@ -1622,11 +1622,13 @@ STATIC_ASSERT_ALIGNED16_SIZE(ChunkData, 16);
 				uint lock = atomicExchange(GetGi(giIndex).lock, 1);
 				if (lock == 0) {
 					float adjacentMixRatio = 0.2;
-					
 					float accumulation = clamp(GetGi(giIndex).radiance.a + 1, 1, MAX_ACCUMULATION);
+					int sampleCount = max(1, int(round(mix(GI_SAMPLES_MAX, GI_SAMPLES_MIN, pow(smoothstep(GI_SAMPLES_FALLOFF_START_DISTANCE, GI_SAMPLES_FALLOFF_END_DISTANCE, dist), 0.5)))));
+					
 					if (GetGi(giIndex).iteration != renderer.giIteration || abs(GetGi(giIndex).frameIndex - int64_t(camera.frameIndex)) > ACCUMULATOR_MAX_FRAME_INDEX_DIFF) {
 						accumulation = 1;
 						adjacentMixRatio = 1;
+						sampleCount *= 4;
 					}
 					
 					RayPayload originalRay = ray;
@@ -1634,9 +1636,9 @@ STATIC_ASSERT_ALIGNED16_SIZE(ChunkData, 16);
 					++ray.bounces;
 					if (!isGiRay) SET_RT_PAYLOAD_FLAG(RT_PAYLOAD_FLAG_GI_RAY)
 					vec3 color = vec3(0);
-					int sampleCount = max(1, int(round(mix(GI_SAMPLES_MAX, GI_SAMPLES_MIN, pow(smoothstep(GI_SAMPLES_FALLOFF_START_DISTANCE, GI_SAMPLES_FALLOFF_END_DISTANCE, dist), 0.5)))));
 					for (int i = 0; i < sampleCount; ++i) {
 						vec3 randomBounceDirection = normalize(originalRay.normal * 0.5 + RandomInUnitSphere(seed));
+						if (i == 0 && accumulation == 1) randomBounceDirection = originalRay.normal;
 						float nDotR = dot(originalRay.normal, randomBounceDirection);
 						if (nDotR < 0) {
 							randomBounceDirection *= -1;
@@ -1763,7 +1765,7 @@ hitAttributeEXT hit {
 };
 
 
-#line 227 "/home/olivier/projects/chill/src/v4d/modules/CHILL_terrain/assets/shaders/voxel.glsl"
+#line 229 "/home/olivier/projects/chill/src/v4d/modules/CHILL_terrain/assets/shaders/voxel.glsl"
 
 bool IsValidVoxel(in ivec3 iPos, in vec3 gridOffset) {
 	if (iPos.x < 0 || iPos.y < 0 || iPos.z < 0) return false;
