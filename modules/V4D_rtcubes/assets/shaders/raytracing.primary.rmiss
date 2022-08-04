@@ -1119,7 +1119,8 @@ uint seed = InitRandomSeed(InitRandomSeed(gl_LaunchIDEXT.x, gl_LaunchIDEXT.y), u
 		bool isUnderWater = (flags & RT_PAYLOAD_FLAG_UNDERWATER) != 0;
 		const float t = dot(renderer.sunDir, vec3(0,1,0));
 		float sunset = pow(1-abs(t), 4);
-		vec3 sunColor = mix(renderer.skyLightColor, vec3(1.0f,0.8f,0.5f), sunset);
+		// vec3 sunColor = mix(renderer.skyLightColor, vec3(1.0f,0.8f,0.5f), sunset);
+		vec3 sunColor = mix(renderer.skyLightColor, vec3(0.15f,0.08f,0.03f), sunset);
 		if (OPTION_DIRECT_LIGHTING) {
 			if (ray.bounces < RAY_MAX_RECURSION) {// Direct Lighting (must apply this for diffuse materials only)
 				float sunSolidAngle = SUN_LIGHT_SOLID_ANGLE;
@@ -1296,7 +1297,7 @@ void main() {
 		const float sunSolidAngle = 0.0003;
 		ray.color.rgb += ray.color.rgb * pow(smoothstep(0.5, 1, dot(gl_WorldRayDirectionEXT, renderer.sunDir)), 2);
 		ray.color.rgb += ray.color.rgb * pow(smoothstep(1-sunGlowAngle, 1.002, dot(gl_WorldRayDirectionEXT, renderer.sunDir)), 2) * 0.5;
-		ray.color.rgb += sunColor * smoothstep(1-sunSolidAngle, 1, dot(gl_WorldRayDirectionEXT, renderer.sunDir)) * 100;
+		ray.color.rgb += sunColor * 0.5 * smoothstep(1-sunSolidAngle, 1, dot(gl_WorldRayDirectionEXT, renderer.sunDir)) * 100;
 		// MOON
 		const float moonSolidAngle = 0.0005;
 		const vec3 moonRelPos = -renderer.sunDir - gl_WorldRayDirectionEXT;

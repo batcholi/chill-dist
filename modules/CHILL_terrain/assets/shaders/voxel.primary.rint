@@ -1119,7 +1119,8 @@ uint seed = InitRandomSeed(InitRandomSeed(gl_LaunchIDEXT.x, gl_LaunchIDEXT.y), u
 		bool isUnderWater = (flags & RT_PAYLOAD_FLAG_UNDERWATER) != 0;
 		const float t = dot(renderer.sunDir, vec3(0,1,0));
 		float sunset = pow(1-abs(t), 4);
-		vec3 sunColor = mix(renderer.skyLightColor, vec3(1.0f,0.8f,0.5f), sunset);
+		// vec3 sunColor = mix(renderer.skyLightColor, vec3(1.0f,0.8f,0.5f), sunset);
+		vec3 sunColor = mix(renderer.skyLightColor, vec3(0.15f,0.08f,0.03f), sunset);
 		if (OPTION_DIRECT_LIGHTING) {
 			if (ray.bounces < RAY_MAX_RECURSION) {// Direct Lighting (must apply this for diffuse materials only)
 				float sunSolidAngle = SUN_LIGHT_SOLID_ANGLE;
@@ -1547,10 +1548,12 @@ STATIC_ASSERT_ALIGNED16_SIZE(ChunkData, 16);
 	#define GI_2_BOUNCES_MAX_DISTANCE 100
 	#define GI_SAMPLES_MIN 1 // min samples to take in different direction, per gi bounce, when far
 	#define GI_SAMPLES_MAX (isUnderWater? (renderer.giMaxSamples/4) : renderer.giMaxSamples) // max samples to take in different direction, per gi bounce, when near (THIS COULD BE A GRAPHICS SETTING THAT GOES UP TO 100)
-	#define GI_SAMPLES_FALLOFF_START_DISTANCE 2
-	#define GI_SAMPLES_FALLOFF_END_DISTANCE 50
+	#define GI_SAMPLES_FALLOFF_START_DISTANCE 5
+	#define GI_SAMPLES_FALLOFF_END_DISTANCE 25
+	#define GI_MIN_DISTANCE 0.1 // camera.zNear
+	#define GI_MAX_DISTANCE camera.zFar
 	#define MAX_ACCUMULATION 128
-	#define ACCUMULATOR_MAX_FRAME_INDEX_DIFF 1000
+	#define ACCUMULATOR_MAX_FRAME_INDEX_DIFF 500
 
 	vec3 GetAmbientVoxelLighting(in vec3 albedo, in ivec3 voxelPosInChunk, in vec3 posInVoxel) {
 		uint flags = RT_PAYLOAD_FLAGS;
@@ -1610,7 +1613,7 @@ STATIC_ASSERT_ALIGNED16_SIZE(ChunkData, 16);
 							GetGi(giIndexCurrent).frameIndex = int64_t(camera.frameIndex);
 							GetGi(giIndexCurrent).iteration = renderer.giIteration;
 							vec3 l = GetGi(giIndexCurrent).radiance.rgb;
-							GetGi(giIndexCurrent).radiance = vec4(mix(l, vec3(0), min(1, 1.0 / accumulation)), accumulation);
+							GetGi(giIndexCurrent).radiance = vec4(mix(l, l*0.5, min(0.5, 0.5 / accumulation)), accumulation);
 							GetGi(giIndexCurrent).lock = 0;
 						}
 					}
@@ -1633,17 +1636,20 @@ STATIC_ASSERT_ALIGNED16_SIZE(ChunkData, 16);
 					vec3 color = vec3(0);
 					int sampleCount = max(1, int(round(mix(GI_SAMPLES_MAX, GI_SAMPLES_MIN, pow(smoothstep(GI_SAMPLES_FALLOFF_START_DISTANCE, GI_SAMPLES_FALLOFF_END_DISTANCE, dist), 0.5)))));
 					for (int i = 0; i < sampleCount; ++i) {
-						vec3 randomBounceDirection = normalize(RandomInUnitSphere(seed));
+						vec3 randomBounceDirection = normalize(originalRay.normal * 0.5 + RandomInUnitSphere(seed));
 						float nDotR = dot(originalRay.normal, randomBounceDirection);
 						if (nDotR < 0) {
 							randomBounceDirection *= -1;
 							nDotR *= -1;
 						}
 						ray.hitDistance = 0;
-						traceRayEXT(tlas, 0, RENDERABLE_PRIMARY_EXCEPT_WATER, 0/*rayType*/, SBT_HITGROUPS_PER_GEOMETRY/*nbRayTypes*/, 0/*missIndex*/, originalRay.nextPosition, camera.zNear, randomBounceDirection, camera.zFar, RAY_PAYLOAD_PRIMARY);
+						traceRayEXT(tlas, 0, RENDERABLE_PRIMARY_EXCEPT_WATER, 0/*rayType*/, SBT_HITGROUPS_PER_GEOMETRY/*nbRayTypes*/, 0/*missIndex*/, originalRay.nextPosition, GI_MIN_DISTANCE, randomBounceDirection, GI_MAX_DISTANCE, RAY_PAYLOAD_PRIMARY);
 						if (ray.hitDistance == -1 && isUnderWater) {
 							float falloff = pow(1-clamp((WATER_LEVEL - ray.nextPosition.y) / MAX_WATER_DEPTH, 0, 1), 4);
 							ray.color.rgb *= falloff;
+						}
+						if (ray.hitDistance > 0) {
+							ray.color.rgb *= smoothstep(GI_SAMPLES_FALLOFF_END_DISTANCE, GI_SAMPLES_FALLOFF_START_DISTANCE, ray.hitDistance);
 						}
 						color += ray.color.rgb * nDotR / sampleCount;
 					}
@@ -1757,7 +1763,7 @@ hitAttributeEXT hit {
 };
 
 
-#line 222 "/home/olivier/projects/chill/src/v4d/modules/CHILL_terrain/assets/shaders/voxel.glsl"
+#line 227 "/home/olivier/projects/chill/src/v4d/modules/CHILL_terrain/assets/shaders/voxel.glsl"
 
 bool IsValidVoxel(in ivec3 iPos, in vec3 gridOffset) {
 	if (iPos.x < 0 || iPos.y < 0 || iPos.z < 0) return false;
