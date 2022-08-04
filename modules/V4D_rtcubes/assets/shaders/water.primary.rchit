@@ -1288,7 +1288,7 @@ float WaterWaves(vec3 pos) {
 
 const float IndexOfRefraction = 1.33;
 
-#define WATER_COLOR (vec3(0.003,0.005,0.011) * renderer.skyLightColor)
+#define WATER_COLOR (vec3(0.004,0.008,0.016) * renderer.skyLightColor)
 #define WATER_OPACITY 0.3
 
 float waterLevel = AABB_MAX.y;
@@ -1303,6 +1303,8 @@ void ApplyUnderwaterFog() {
 	ray.color.rgb = mix(ray.color.rgb, vec3(0), pow(clamp(ray.hitDistance / MAX_WATER_DEPTH, 0, 1), 0.5));
 	
 	uint steps = max(1, renderer.fogSteps);
+	
+	bool hitSunlight = false;
 	
 	if (ray.bounces < RAY_MAX_RECURSION) {
 		const float fogAmount = fogStrength / steps;
@@ -1319,6 +1321,7 @@ void ApplyUnderwaterFog() {
 				float distanceToSurface = clamp(min(underwaterDepth/max(0.001, dot(renderer.sunDir, vec3(0,1,0))), camera.zFar), camera.zNear, camera.zFar);
 				vec3 color = mix(WATER_COLOR, fogColor, clamp(distanceToSurface / MAX_WATER_DEPTH, 0, 1)) * (1-clamp(underwaterDepth / MAX_WATER_DEPTH, 0, 1));
 				originalRay.color.rgb = mix(originalRay.color.rgb, color, fogAmount * 0.5);
+				hitSunlight = true;
 			} else {
 				originalRay.color.rgb = mix(originalRay.color.rgb, vec3(0), fogAmount);
 			}
@@ -1326,7 +1329,7 @@ void ApplyUnderwaterFog() {
 		UNSET_RT_PAYLOAD_FLAG(RT_PAYLOAD_FLAG_FOG_RAY)
 		ray = originalRay;
 	}
-	ray.color.rgb = min(mix(normalize(fogColor), ray.color.rgb, 0.999), mix(ray.color.rgb, fogColor, fogStrength));
+	if (hitSunlight) ray.color.rgb = min(mix(normalize(fogColor), ray.color.rgb, 0.999), mix(ray.color.rgb, fogColor, fogStrength));
 }
 
 void main() {
