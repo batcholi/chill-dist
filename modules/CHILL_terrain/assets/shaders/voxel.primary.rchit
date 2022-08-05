@@ -762,13 +762,23 @@ vec3 RandomInUnitSphere(inout uint seed) {
 #define RENDERER_DEBUG_MODE_GLOBAL_ILLUMINATION 14
 #define RENDERER_DEBUG_MODE_TEST 15
 
+#define TRACE_TYPE_PRIMARY (1u<< 0)
+#define TRACE_TYPE_TRANSPARENT (1u<< 1)
+#define TRACE_TYPE_REFLECTION (1u<< 2)
+#define TRACE_TYPE_FOG (1u<< 3)
+#define TRACE_TYPE_DIRECT_LIGHTING (1u<< 4)
+#define TRACE_TYPE_GI (1u<< 5)
+
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////
 // Structs and Buffer References -- Must use aligned_* explicit arithmetic types (or VkDeviceAddress as an uint64_t, or BUFFER_REFERENCE_ADDR(StructType))
 
 struct RayTracingPushConstant {
 	aligned_uint32_t cameraIndex;
+	aligned_uint32_t outputIndex;
+	aligned_uint32_t traceTypes;
+	aligned_uint32_t scale; // from this rgen, we multiply by this value to get back to the full render resolution
 };
-STATIC_ASSERT_SIZE(RayTracingPushConstant, 4)
+STATIC_ASSERT_SIZE(RayTracingPushConstant, 16)
 
 BUFFER_REFERENCE_STRUCT_READONLY(16) TLASInstance {
 	aligned_f32mat3x4 transform;
@@ -808,7 +818,7 @@ struct RendererData {
 	aligned_float32_t waterLevel;
 	aligned_float64_t timestamp;
 	aligned_float32_t waterMaxLightDepth;
-	aligned_float32_t _unused;
+	aligned_float32_t testValue;
 };
 STATIC_ASSERT_ALIGNED16_SIZE(RendererData, 9*16);
 #line 10 "/home/olivier/projects/chill/src/v4d/modules/V4D_rtcubes/base.glsl"
@@ -821,12 +831,12 @@ layout(push_constant) uniform PushConstant {
 layout(set = 1, binding = SET1_BINDING_RENDERER_DATA) buffer RendererDataBuffer { RendererData renderer; };
 layout(set = 1, binding = SET1_BINDING_RT_PAYLOAD_IMAGE, r32ui) uniform uimage2D rtPayloadImage;
 
-bool OPTION_TEXTURES = (renderer.options & RENDERER_OPTION_TEXTURES) != 0;
-bool OPTION_REFLECTIONS = (renderer.options & RENDERER_OPTION_REFLECTIONS) != 0;
-bool OPTION_TRANSPARENCY = (renderer.options & RENDERER_OPTION_TRANSPARENCY) != 0;
-bool OPTION_INDIRECT_LIGHTING = (renderer.options & RENDERER_OPTION_INDIRECT_LIGHTING) != 0;
-bool OPTION_DIRECT_LIGHTING = (renderer.options & RENDERER_OPTION_DIRECT_LIGHTING) != 0;
-bool OPTION_SOFT_SHADOWS = (renderer.options & RENDERER_OPTION_SOFT_SHADOWS) != 0;
+bool OPTION_TEXTURES = ((renderer.options & RENDERER_OPTION_TEXTURES) != 0);
+bool OPTION_REFLECTIONS = ((renderer.options & RENDERER_OPTION_REFLECTIONS) != 0 && (pushConstant.traceTypes & TRACE_TYPE_REFLECTION) != 0);
+bool OPTION_TRANSPARENCY = ((renderer.options & RENDERER_OPTION_TRANSPARENCY) != 0 && (pushConstant.traceTypes & TRACE_TYPE_TRANSPARENT) != 0);
+bool OPTION_INDIRECT_LIGHTING = ((renderer.options & RENDERER_OPTION_INDIRECT_LIGHTING) != 0 && (pushConstant.traceTypes & TRACE_TYPE_GI) != 0);
+bool OPTION_DIRECT_LIGHTING = ((renderer.options & RENDERER_OPTION_DIRECT_LIGHTING) != 0 && (pushConstant.traceTypes & TRACE_TYPE_DIRECT_LIGHTING) != 0);
+bool OPTION_SOFT_SHADOWS = ((renderer.options & RENDERER_OPTION_SOFT_SHADOWS) != 0);
 
 #define RAY_MAX_RECURSION 8
 
@@ -1063,7 +1073,7 @@ uint seed = InitRandomSeed(InitRandomSeed(gl_LaunchIDEXT.x, gl_LaunchIDEXT.y), u
 	layout(set = 1, binding = SET1_BINDING_TLAS) uniform accelerationStructureEXT tlas;
 
 	void ApplyFog(in vec3 origin, in vec3 dir) {
-		if ((RT_PAYLOAD_FLAGS & RT_PAYLOAD_FLAG_UNDERWATER) == 0) {
+		if ((pushConstant.traceTypes & TRACE_TYPE_FOG) != 0 && (RT_PAYLOAD_FLAGS & RT_PAYLOAD_FLAG_UNDERWATER) == 0) {
 			const float dist = ray.hitDistance > 0 ? ray.hitDistance : renderer.fogEndDistance;
 			const float sunIncidentAngle = dot(-renderer.sunDir, dir);
 			const float distFactor = min(1, smoothstep(renderer.fogStartDistance, renderer.fogEndDistance, dist));
@@ -1552,8 +1562,8 @@ STATIC_ASSERT_ALIGNED16_SIZE(ChunkData, 16);
 	#define GI_SAMPLES_FALLOFF_END_DISTANCE 25
 	#define GI_MIN_DISTANCE 0.1 // camera.zNear
 	#define GI_MAX_DISTANCE camera.zFar
-	#define MAX_ACCUMULATION 256
-	#define ACCUMULATOR_MAX_FRAME_INDEX_DIFF 100
+	#define MAX_ACCUMULATION 128
+	#define ACCUMULATOR_MAX_FRAME_INDEX_DIFF 500
 
 	vec3 GetAmbientVoxelLighting(in vec3 albedo, in ivec3 voxelPosInChunk, in vec3 posInVoxel) {
 		uint flags = RT_PAYLOAD_FLAGS;
@@ -1597,11 +1607,12 @@ STATIC_ASSERT_ALIGNED16_SIZE(ChunkData, 16);
 			
 			float dist = length((camera.viewMatrix * vec4(facingWorldPos, 1)).xyz);
 			
-			int maxBounces = min(RAY_MAX_RECURSION, dist > GI_2_BOUNCES_MAX_DISTANCE? 1:2);
+			int maxBounces = min(RAY_MAX_RECURSION, (dist > GI_2_BOUNCES_MAX_DISTANCE? 1:2) + (isUnderWater?1:0));
 			
 			if (ray.bounces < maxBounces) {
 				
-				if (!isGiRay && !isUnderWater) {// Set Current Voxel GI Darker if opaque
+				if (!isGiRay && !isUnderWater && renderer.testValue > 0) {// Set Current Voxel GI Darker if opaque
+					float ratio = renderer.testValue; // 0.5
 					if (IsVoxel(chunkID, voxelPosInChunk) && ChunkData(chunkID).voxels.fill[VoxelIndex(voxelPosInChunk.x, voxelPosInChunk.y, voxelPosInChunk.z)] == VOXEL_FULL) {
 						uint giIndexCurrent = GetGiIndex(ivec3(round(ray.nextPosition - ray.normal * 0.5)));
 						int lock = atomicExchange(GetGi(giIndexCurrent).lock, 1);
@@ -1613,7 +1624,7 @@ STATIC_ASSERT_ALIGNED16_SIZE(ChunkData, 16);
 							GetGi(giIndexCurrent).frameIndex = int64_t(camera.frameIndex);
 							GetGi(giIndexCurrent).iteration = renderer.giIteration;
 							vec3 l = GetGi(giIndexCurrent).radiance.rgb;
-							GetGi(giIndexCurrent).radiance = vec4(mix(l, l*0.5, min(0.5, 0.5 / accumulation)), accumulation);
+							GetGi(giIndexCurrent).radiance = vec4(mix(l, l*(1-ratio), min(ratio, ratio / accumulation)), accumulation);
 							GetGi(giIndexCurrent).lock = 0;
 						}
 					}
@@ -1765,7 +1776,7 @@ hitAttributeEXT hit {
 };
 
 
-#line 381 "/home/olivier/projects/chill/src/v4d/modules/CHILL_terrain/assets/shaders/voxel.glsl"
+#line 382 "/home/olivier/projects/chill/src/v4d/modules/CHILL_terrain/assets/shaders/voxel.glsl"
 
 void main() {
 	CLOSEST_HIT_BEGIN
