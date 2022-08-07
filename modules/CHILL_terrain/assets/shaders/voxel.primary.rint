@@ -1879,7 +1879,7 @@ STATIC_ASSERT_ALIGNED16_SIZE(ChunkData, 16);
 
 /////////////////////////////////////////////////////////////
 
-// hitAttributeEXT VOXEL_INDEX_TYPE voxelIndex; // Because of a bug in AMD drivers, we CANNOT rely on hitAttributeEXT
+hitAttributeEXT VOXEL_INDEX_TYPE voxelIndex; // Because of a bug in AMD drivers, we CANNOT rely on hitAttributeEXT
 
 
 #line 227 "/home/olivier/projects/chill/src/v4d/modules/CHILL_terrain/assets/shaders/voxel.glsl"
@@ -1908,7 +1908,7 @@ void NextStepDDA(inout bvec3 bNormalMask, inout ivec3 iPos, inout vec3 travelDis
 	travelDist += vec3(bNormalMask) * stepSize;
 }
 
-void ReportIntersection(in vec3 pos, in vec3 rayOrigin, in vec3 rayDir, in bvec3 bNormalMask, in ivec3 iStepDir, in float voxelSize, in VOXEL_INDEX_TYPE _voxelIndex) {
+void ReportIntersection(in vec3 pos, in vec3 rayOrigin, in vec3 rayDir, in bvec3 bNormalMask, in ivec3 iStepDir, in float voxelSize) {
 	// Compute actual T
 	const vec3 tmin = min((pos - rayOrigin) / rayDir, (pos + voxelSize - rayOrigin) / rayDir);
 	const float T = max(gl_RayTminEXT, max(tmin.x, max(tmin.y, tmin.z)));
@@ -1919,13 +1919,11 @@ void ReportIntersection(in vec3 pos, in vec3 rayOrigin, in vec3 rayDir, in bvec3
 		+ int(bNormalMask.z) * (5 - 3 * max(0, iStepDir.z))
 	);
 	if (camera.debugViewMode == RENDERER_DEBUG_MODE_RAYINT_TIME) WRITE_DEBUG_TIME
-	// voxelIndex = _voxelIndex;
 	reportIntersectionEXT(T, normalIndex);
 }
 
-void ReportIntersection(in float t, in uint8_t normalIndex, in VOXEL_INDEX_TYPE _voxelIndex) {
+void ReportIntersection(in float t, in uint8_t normalIndex) {
 	if (camera.debugViewMode == RENDERER_DEBUG_MODE_RAYINT_TIME) WRITE_DEBUG_TIME
-	// voxelIndex = _voxelIndex;
 	reportIntersectionEXT(t, normalIndex);
 }
 
@@ -1961,11 +1959,11 @@ void main() {
 		
 		for (int i = 0; i < maxIterations; i++) {
 			if (IsValidVoxel(iPos, gridOffset)) {
-				VOXEL_INDEX_TYPE _voxelIndex = VoxelIndex(iPos.x, iPos.y, iPos.z);
-				const uint64_t fill = voxelData.fill[_voxelIndex];
+				voxelIndex = VoxelIndex(iPos.x, iPos.y, iPos.z);
+				const uint64_t fill = voxelData.fill[voxelIndex];
 				if (fill != VOXEL_EMPTY) {
 					if (fill == VOXEL_FULL || !enableHdVoxels) {
-						ReportIntersection(vec3(iPos) * voxelData.voxelSize, rayOrigin, rayDir, bNormalMask, iStepDir, voxelData.voxelSize, _voxelIndex);
+						ReportIntersection(vec3(iPos) * voxelData.voxelSize, rayOrigin, rayDir, bNormalMask, iStepDir, voxelData.voxelSize);
 						return;
 					} else {
 						
@@ -1980,7 +1978,7 @@ void main() {
 								const float thickness = renderer.wireframeThickness * camera.renderScale * max(1, T);
 								const float theshold = 0.5 - thickness;
 								if (step(theshold, distFromCenter.x) + step(theshold, distFromCenter.y) + step(theshold, distFromCenter.z) > 1) {
-									ReportIntersection(vec3(iPos) * voxelData.voxelSize, rayOrigin, rayDir, bNormalMask, iStepDir, voxelData.voxelSize, _voxelIndex);
+									ReportIntersection(vec3(iPos) * voxelData.voxelSize, rayOrigin, rayDir, bNormalMask, iStepDir, voxelData.voxelSize);
 									return;
 								}
 							}
@@ -1997,7 +1995,7 @@ void main() {
 						for (int j = 0; j < maxIterations_hd; j++) {
 							if (IsValidVoxelHD(iPos_hd)) {
 								if ((fill & VoxelFillBitHD(iPos_hd)) != 0) {
-									ReportIntersection((vec3(iPos_hd)/VOXEL_GRID_SIZE_HD + vec3(iPos)), rayOrigin, rayDir, bNormalMask_hd, iStepDir, 1.0/VOXEL_GRID_SIZE_HD, _voxelIndex);
+									ReportIntersection((vec3(iPos_hd)/VOXEL_GRID_SIZE_HD + vec3(iPos)), rayOrigin, rayDir, bNormalMask_hd, iStepDir, 1.0/VOXEL_GRID_SIZE_HD);
 									return;
 								}
 							}
@@ -2026,7 +2024,8 @@ void main() {
 		else if (absMax.y < EPSILON) normalIndex = uint8_t(4);
 		else if (absMax.z < EPSILON) normalIndex = uint8_t(5);
 		ivec3 iPos = ivec3(round(localPosition));
-		ReportIntersection(T1, normalIndex, VoxelIndex(iPos.x, iPos.y % VOXELS_Y, iPos.z));
+		voxelIndex = VoxelIndex(iPos.x, iPos.y % VOXELS_Y, iPos.z);
+		ReportIntersection(T1, normalIndex);
 	}
 }
 

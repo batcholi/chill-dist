@@ -1879,10 +1879,10 @@ STATIC_ASSERT_ALIGNED16_SIZE(ChunkData, 16);
 
 /////////////////////////////////////////////////////////////
 
-// hitAttributeEXT VOXEL_INDEX_TYPE voxelIndex; // Because of a bug in AMD drivers, we CANNOT rely on hitAttributeEXT
+hitAttributeEXT VOXEL_INDEX_TYPE voxelIndex; // Because of a bug in AMD drivers, we CANNOT rely on hitAttributeEXT
 
 
-#line 375 "/home/olivier/projects/chill/src/v4d/modules/CHILL_terrain/assets/shaders/voxel.glsl"
+#line 374 "/home/olivier/projects/chill/src/v4d/modules/CHILL_terrain/assets/shaders/voxel.glsl"
 
 void main() {
 	CLOSEST_HIT_BEGIN
@@ -1893,13 +1893,13 @@ void main() {
 		
 		surface.normal = BOX_NORMAL_DIRS[normalIndex];
 		
-		//////////////////////////////////////////////////////////////////////////
-			// Because of a bug in AMD drivers, we CANNOT rely on hitAttributeEXT, so we must fetch the voxelIndex again here
-			const vec3 gridOffset = vec3(VOXEL_GRID_OFFSET) + vec3(voxelData.aabbOffset) * voxelData.voxelSize;
-			ivec3 iPos = ivec3(floor((ray.localPosition - surface.normal * EPSILON * ray.hitDistance - gridOffset) / voxelData.voxelSize));
-			VOXEL_INDEX_TYPE voxelIndex = VoxelIndex(iPos.x, iPos.y, iPos.z);
-			if (voxelIndex >= VOXELS_PER_CHUNK) return;
-		//////////////////////////////////////////////////////////////////////////
+		// //////////////////////////////////////////////////////////////////////////
+		// 	// Because of a bug in AMD drivers, we CANNOT rely on hitAttributeEXT, so we must fetch the voxelIndex again here
+		// 	const vec3 gridOffset = vec3(VOXEL_GRID_OFFSET) + vec3(voxelData.aabbOffset) * voxelData.voxelSize;
+		// 	ivec3 iPos = ivec3(floor((ray.localPosition - surface.normal * EPSILON * ray.hitDistance - gridOffset) / voxelData.voxelSize));
+		// 	VOXEL_INDEX_TYPE voxelIndex = VoxelIndex(iPos.x, iPos.y, iPos.z);
+		// 	if (voxelIndex >= VOXELS_PER_CHUNK) return;
+		// //////////////////////////////////////////////////////////////////////////
 		
 		
 		// DEBUG_TEST(vec4(Heatmap(float(voxelIndex)/4096), 1))
@@ -1920,7 +1920,7 @@ void main() {
 			return;
 		}
 		
-		// const ivec3 iPos = VoxelIndex_iPos(voxelIndex);
+		const ivec3 iPos = VoxelIndex_iPos(voxelIndex);
 		surface.posInVoxel = ray.localPosition - vec3(voxelData.aabbOffset + iPos) * voxelData.voxelSize;
 		// voxelData.data[voxelIndex]
 		// voxelData.fill[voxelIndex]
