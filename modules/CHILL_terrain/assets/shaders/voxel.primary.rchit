@@ -1898,7 +1898,7 @@ void main() {
 		// 	const vec3 gridOffset = vec3(VOXEL_GRID_OFFSET) + vec3(voxelData.aabbOffset) * voxelData.voxelSize;
 		// 	ivec3 iPos = ivec3(floor((ray.localPosition - surface.normal * EPSILON * ray.hitDistance - gridOffset) / voxelData.voxelSize));
 		// 	VOXEL_INDEX_TYPE voxelIndex = VoxelIndex(iPos.x, iPos.y, iPos.z);
-		// 	if (voxelIndex >= VOXELS_PER_CHUNK) return;
+			if (voxelIndex >= VOXELS_PER_CHUNK) return;
 		// //////////////////////////////////////////////////////////////////////////
 		
 		
