@@ -377,6 +377,18 @@ float GetFragDepthFromWorldSpacePosition(vec3 worldSpacePos) {
 	return clipSpace.z / clipSpace.w;
 }
 
+vec3 GetViewSpacePositionFromDepthAndUV(float depth, vec2 uv) {
+	vec4 viewSpacePos = inverse(camera.projectionMatrixWithTAA) * vec4((uv * 2 - 1), depth, 1);
+	viewSpacePos.xyz /= viewSpacePos.w;
+	if (depth == 0) viewSpacePos.z = camera.zFar;
+	return viewSpacePos.xyz;
+}
+
+float GetTrueDistanceFromDepthBuffer(float depth) {
+	if (depth == 0 || depth == 1) return camera.zFar;
+	return 2.0 * (camera.zFar * camera.zNear) / (camera.zNear + camera.zFar - (depth * 2.0 - 1.0) * (camera.zNear - camera.zFar));
+}
+
 vec3 VarianceClamp5(in vec3 color, in sampler2D tex, in vec2 uv) {
 	vec3 nearColor0 = texture(tex, uv).rgb;
 	vec3 nearColor1 = textureLodOffset(tex, uv, 0.0, ivec2( 1,  0)).rgb;
@@ -574,17 +586,17 @@ void main() {
 	
 	if (camera.debugViewMode != 0) {
 		out_swapchain = vec4(mix(out_swapchain.rgb, specialImage.rgb, specialImage.a), 1);
-	} else 
-	// Blur
-	if (specialImage.a > 0) {
-		const int kernelSize = int(round(specialImage.a));
-		vec2 oneOverSize = 1.0 / vec2(textureSize(sampler_post, 0));
-		for (int x = -kernelSize; x <= kernelSize; ++x) {
-			for (int y = -kernelSize; y <= kernelSize; ++y) {
-				out_swapchain.rgb += texture(sampler_post, uv + vec2(x,y)*oneOverSize).rgb;
-			}
-		}
-		out_swapchain.rgb /= pow(kernelSize*2+1, 2) + 1;
 	}
+	// // Blur
+ 	// else if (specialImage.a > 0) {
+	// 	const int kernelSize = int(round(specialImage.a));
+	// 	vec2 oneOverSize = 1.0 / vec2(textureSize(sampler_post, 0));
+	// 	for (int x = -kernelSize; x <= kernelSize; ++x) {
+	// 		for (int y = -kernelSize; y <= kernelSize; ++y) {
+	// 			out_swapchain.rgb += texture(sampler_post, uv + vec2(x,y)*oneOverSize).rgb;
+	// 		}
+	// 	}
+	// 	out_swapchain.rgb /= pow(kernelSize*2+1, 2) + 1;
+	// }
 	
 }

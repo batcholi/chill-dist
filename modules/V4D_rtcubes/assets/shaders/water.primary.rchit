@@ -385,6 +385,18 @@ float GetFragDepthFromWorldSpacePosition(vec3 worldSpacePos) {
 	return clipSpace.z / clipSpace.w;
 }
 
+vec3 GetViewSpacePositionFromDepthAndUV(float depth, vec2 uv) {
+	vec4 viewSpacePos = inverse(camera.projectionMatrixWithTAA) * vec4((uv * 2 - 1), depth, 1);
+	viewSpacePos.xyz /= viewSpacePos.w;
+	if (depth == 0) viewSpacePos.z = camera.zFar;
+	return viewSpacePos.xyz;
+}
+
+float GetTrueDistanceFromDepthBuffer(float depth) {
+	if (depth == 0 || depth == 1) return camera.zFar;
+	return 2.0 * (camera.zFar * camera.zNear) / (camera.zNear + camera.zFar - (depth * 2.0 - 1.0) * (camera.zNear - camera.zFar));
+}
+
 vec3 VarianceClamp5(in vec3 color, in sampler2D tex, in vec2 uv) {
 	vec3 nearColor0 = texture(tex, uv).rgb;
 	vec3 nearColor1 = textureLodOffset(tex, uv, 0.0, ivec2( 1,  0)).rgb;
@@ -762,7 +774,7 @@ vec3 RandomInUnitSphere(inout uint seed) {
 #define RENDERER_DEBUG_MODE_GLOBAL_ILLUMINATION 14
 #define RENDERER_DEBUG_MODE_TEST 15
 
-#define TRACE_TYPE_PRIMARY (1u<< 0)
+#define TRACE_TYPE_ALL (1u<< 0)
 #define TRACE_TYPE_TRANSPARENT (1u<< 1)
 #define TRACE_TYPE_REFLECTION (1u<< 2)
 #define TRACE_TYPE_FOG (1u<< 3)
@@ -832,10 +844,10 @@ layout(set = 1, binding = SET1_BINDING_RENDERER_DATA) buffer RendererDataBuffer 
 layout(set = 1, binding = SET1_BINDING_RT_PAYLOAD_IMAGE, r32ui) uniform uimage2D rtPayloadImage;
 
 bool OPTION_TEXTURES = ((renderer.options & RENDERER_OPTION_TEXTURES) != 0);
-bool OPTION_REFLECTIONS = ((renderer.options & RENDERER_OPTION_REFLECTIONS) != 0 && (pushConstant.traceTypes & TRACE_TYPE_REFLECTION) != 0);
-bool OPTION_TRANSPARENCY = ((renderer.options & RENDERER_OPTION_TRANSPARENCY) != 0 && (pushConstant.traceTypes & TRACE_TYPE_TRANSPARENT) != 0);
-bool OPTION_INDIRECT_LIGHTING = ((renderer.options & RENDERER_OPTION_INDIRECT_LIGHTING) != 0 && (pushConstant.traceTypes & TRACE_TYPE_GI) != 0);
-bool OPTION_DIRECT_LIGHTING = ((renderer.options & RENDERER_OPTION_DIRECT_LIGHTING) != 0 && (pushConstant.traceTypes & TRACE_TYPE_DIRECT_LIGHTING) != 0);
+bool OPTION_REFLECTIONS = ((renderer.options & RENDERER_OPTION_REFLECTIONS) != 0);
+bool OPTION_TRANSPARENCY = ((renderer.options & RENDERER_OPTION_TRANSPARENCY) != 0);
+bool OPTION_INDIRECT_LIGHTING = ((renderer.options & RENDERER_OPTION_INDIRECT_LIGHTING) != 0);
+bool OPTION_DIRECT_LIGHTING = ((renderer.options & RENDERER_OPTION_DIRECT_LIGHTING) != 0);
 bool OPTION_SOFT_SHADOWS = ((renderer.options & RENDERER_OPTION_SOFT_SHADOWS) != 0);
 
 #define RAY_MAX_RECURSION 8
@@ -1073,7 +1085,7 @@ uint seed = InitRandomSeed(InitRandomSeed(gl_LaunchIDEXT.x, gl_LaunchIDEXT.y), u
 	layout(set = 1, binding = SET1_BINDING_TLAS) uniform accelerationStructureEXT tlas;
 
 	void ApplyFog(in vec3 origin, in vec3 dir) {
-		if ((pushConstant.traceTypes & TRACE_TYPE_FOG) != 0 && (RT_PAYLOAD_FLAGS & RT_PAYLOAD_FLAG_UNDERWATER) == 0) {
+		if ((RT_PAYLOAD_FLAGS & RT_PAYLOAD_FLAG_UNDERWATER) == 0) {
 			const float dist = ray.hitDistance > 0 ? ray.hitDistance : renderer.fogEndDistance;
 			const float sunIncidentAngle = dot(-renderer.sunDir, dir);
 			const float distFactor = min(1, smoothstep(renderer.fogStartDistance, renderer.fogEndDistance, dist));
@@ -1366,7 +1378,7 @@ void main() {
 			ApplyFresnelReflection(IndexOfRefraction);
 			
 			// See through water
-			if (OPTION_TRANSPARENCY && isFirstRay) {
+			if (OPTION_TRANSPARENCY && isFirstRay && (pushConstant.traceTypes & TRACE_TYPE_TRANSPARENT) != 0) {
 				RayPayload waterRay = ray;
 				vec3 rayDirection = gl_WorldRayDirectionEXT;
 				if (Refract(rayDirection, waterRay.normal, IndexOfRefraction)) {
@@ -1381,11 +1393,9 @@ void main() {
 					waterRay.color.rgb = ray.color.rgb;
 					ray = waterRay;
 				}
-			} else {
-				ray.color.rgb = WATER_COLOR * clamp(pow(ray.normal.y, 8), 0, 1);
+				ray.color.a = 0; // This makes it transparent for the next pass but doesn't trigger the transparency pass in the current pass
 			}
 			
-			ray.color.a = 0; // This makes it both transparent and reflective (results in a full untinted reflection added on top of the surface)
 			if (!isAlreadyUnderwater) UNSET_RT_PAYLOAD_FLAG(RT_PAYLOAD_FLAG_UNDERWATER)
 			
 		} else {

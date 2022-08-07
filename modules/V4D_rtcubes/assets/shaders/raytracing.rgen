@@ -385,6 +385,18 @@ float GetFragDepthFromWorldSpacePosition(vec3 worldSpacePos) {
 	return clipSpace.z / clipSpace.w;
 }
 
+vec3 GetViewSpacePositionFromDepthAndUV(float depth, vec2 uv) {
+	vec4 viewSpacePos = inverse(camera.projectionMatrixWithTAA) * vec4((uv * 2 - 1), depth, 1);
+	viewSpacePos.xyz /= viewSpacePos.w;
+	if (depth == 0) viewSpacePos.z = camera.zFar;
+	return viewSpacePos.xyz;
+}
+
+float GetTrueDistanceFromDepthBuffer(float depth) {
+	if (depth == 0 || depth == 1) return camera.zFar;
+	return 2.0 * (camera.zFar * camera.zNear) / (camera.zNear + camera.zFar - (depth * 2.0 - 1.0) * (camera.zNear - camera.zFar));
+}
+
 vec3 VarianceClamp5(in vec3 color, in sampler2D tex, in vec2 uv) {
 	vec3 nearColor0 = texture(tex, uv).rgb;
 	vec3 nearColor1 = textureLodOffset(tex, uv, 0.0, ivec2( 1,  0)).rgb;
@@ -762,7 +774,7 @@ vec3 RandomInUnitSphere(inout uint seed) {
 #define RENDERER_DEBUG_MODE_GLOBAL_ILLUMINATION 14
 #define RENDERER_DEBUG_MODE_TEST 15
 
-#define TRACE_TYPE_PRIMARY (1u<< 0)
+#define TRACE_TYPE_ALL (1u<< 0)
 #define TRACE_TYPE_TRANSPARENT (1u<< 1)
 #define TRACE_TYPE_REFLECTION (1u<< 2)
 #define TRACE_TYPE_FOG (1u<< 3)
@@ -832,10 +844,10 @@ layout(set = 1, binding = SET1_BINDING_RENDERER_DATA) buffer RendererDataBuffer 
 layout(set = 1, binding = SET1_BINDING_RT_PAYLOAD_IMAGE, r32ui) uniform uimage2D rtPayloadImage;
 
 bool OPTION_TEXTURES = ((renderer.options & RENDERER_OPTION_TEXTURES) != 0);
-bool OPTION_REFLECTIONS = ((renderer.options & RENDERER_OPTION_REFLECTIONS) != 0 && (pushConstant.traceTypes & TRACE_TYPE_REFLECTION) != 0);
-bool OPTION_TRANSPARENCY = ((renderer.options & RENDERER_OPTION_TRANSPARENCY) != 0 && (pushConstant.traceTypes & TRACE_TYPE_TRANSPARENT) != 0);
-bool OPTION_INDIRECT_LIGHTING = ((renderer.options & RENDERER_OPTION_INDIRECT_LIGHTING) != 0 && (pushConstant.traceTypes & TRACE_TYPE_GI) != 0);
-bool OPTION_DIRECT_LIGHTING = ((renderer.options & RENDERER_OPTION_DIRECT_LIGHTING) != 0 && (pushConstant.traceTypes & TRACE_TYPE_DIRECT_LIGHTING) != 0);
+bool OPTION_REFLECTIONS = ((renderer.options & RENDERER_OPTION_REFLECTIONS) != 0);
+bool OPTION_TRANSPARENCY = ((renderer.options & RENDERER_OPTION_TRANSPARENCY) != 0);
+bool OPTION_INDIRECT_LIGHTING = ((renderer.options & RENDERER_OPTION_INDIRECT_LIGHTING) != 0);
+bool OPTION_DIRECT_LIGHTING = ((renderer.options & RENDERER_OPTION_DIRECT_LIGHTING) != 0);
 bool OPTION_SOFT_SHADOWS = ((renderer.options & RENDERER_OPTION_SOFT_SHADOWS) != 0);
 
 #define RAY_MAX_RECURSION 8
@@ -1073,7 +1085,7 @@ uint seed = InitRandomSeed(InitRandomSeed(gl_LaunchIDEXT.x, gl_LaunchIDEXT.y), u
 	layout(set = 1, binding = SET1_BINDING_TLAS) uniform accelerationStructureEXT tlas;
 
 	void ApplyFog(in vec3 origin, in vec3 dir) {
-		if ((pushConstant.traceTypes & TRACE_TYPE_FOG) != 0 && (RT_PAYLOAD_FLAGS & RT_PAYLOAD_FLAG_UNDERWATER) == 0) {
+		if ((RT_PAYLOAD_FLAGS & RT_PAYLOAD_FLAG_UNDERWATER) == 0) {
 			const float dist = ray.hitDistance > 0 ? ray.hitDistance : renderer.fogEndDistance;
 			const float sunIncidentAngle = dot(-renderer.sunDir, dir);
 			const float distFactor = min(1, smoothstep(renderer.fogStartDistance, renderer.fogEndDistance, dist));
@@ -1296,19 +1308,20 @@ void main() {
 	const vec2 uv = pixelCenter/vec2(gl_LaunchSizeEXT.xy);
 	const vec3 initialRayPosition = inverse(cam.viewMatrix)[3].xyz;
 	const vec3 initialRayDirection = normalize(VIEW2WORLDNORMAL * normalize(vec4(inverse(mat4(cam.projectionMatrixWithTAA)) * vec4(uv*2-1, 1, 1)).xyz));
-	if (camera.debugViewMode != 0) imageStore(img_debug, imgCoords, vec4(0));
 	SET_RT_PAYLOAD_FLAGS(0)
 	
-	// Final data to write
-	float depth;
-	vec3 motion;
-	vec3 color;
-	
-	vec3 firstRayHitWorldPosition;
-	bool hitSomething;
-	RayPayload firstRay;
-	
-	if ((pushConstant.traceTypes & TRACE_TYPE_PRIMARY) != 0) {
+	if (pushConstant.outputIndex == 0) {
+		if (camera.debugViewMode != 0) imageStore(img_debug, imgCoords, vec4(0));
+		
+		// Final data to write
+		float depth;
+		vec3 motion;
+		vec3 color;
+		
+		vec3 firstRayHitWorldPosition;
+		bool hitSomething;
+		RayPayload firstRay;
+		
 		// Initialize ray payload
 		ray.totalDistanceFromEye = 0;
 		// Launch Primary Ray
@@ -1319,58 +1332,50 @@ void main() {
 		firstRayHitWorldPosition = initialRayPosition + initialRayDirection * ray.hitDistance;
 		hitSomething = ray.hitDistance > 0 && ray.tlasInstanceIndex > -1;
 		color = ray.color.rgb;
-	} else {
-		hitSomething = imageLoad(img_depth, imgCoords).r != 0;
-		ray.color = imageLoad(img_composite, imgCoords);
-		color = ray.color.rgb;
-	}
-	firstRay = ray;
-	
-	// Transparent
-	if (OPTION_TRANSPARENCY && ray.color.a > 0 && ray.color.a < 0.995) {
-		float translucency = 1.0 - clamp(abs(ray.color.a), 0.01, 1);
-		SET_RT_PAYLOAD_FLAG(RT_PAYLOAD_FLAG_TRANSPARENT_RAY)
-		while (ray.hitDistance > 0 && translucency > 0.01 && ray.color.a > 0) {
-			vec3 worldPos = ray.nextPosition;
-			ray.hitDistance = 0;
-			ray.bounces = 0;
-			traceRayEXT(tlas, 0, RENDERABLE_STANDARD, 0/*rayType*/, SBT_HITGROUPS_PER_GEOMETRY/*nbRayTypes*/, 0/*missIndex*/, worldPos, cam.zNear, initialRayDirection, cam.zFar, RAY_PAYLOAD_PRIMARY);
-			ApplyFog(worldPos, initialRayDirection);
-			color = mix(color, ray.color.rgb, translucency);
-			translucency *= 1.0 - clamp(abs(ray.color.a), 0.01, 1);
-		}
-		UNSET_RT_PAYLOAD_FLAG(RT_PAYLOAD_FLAG_TRANSPARENT_RAY)
-	}
-	
-	// Reflection
-	if (OPTION_REFLECTIONS) {
-		if (ray.hitDistance > 0) {
-			bool isBothTransparentAndReflective = (ray.color.a == 0); // Typically for Water
-			vec3 rayPosition = firstRayHitWorldPosition;
-			vec3 reflectDirection = reflect(initialRayDirection, firstRay.normal);
-			float reflection = firstRay.reflection;
-			SET_RT_PAYLOAD_FLAG(RT_PAYLOAD_FLAG_REFLECTION_RAY)
-			while (reflection > 0.01) {
-				if (dot(reflectDirection, reflectDirection) == 0) break;
-				ray.hitDistance = 0;
-				ray.bounces = 0;
-				traceRayEXT(tlas, 0, RENDERABLE_STANDARD, 0/*rayType*/, SBT_HITGROUPS_PER_GEOMETRY/*nbRayTypes*/, 0/*missIndex*/, rayPosition, cam.zNear, reflectDirection, cam.zFar, RAY_PAYLOAD_PRIMARY);
-				ApplyFog(rayPosition, reflectDirection);
-				color += (isBothTransparentAndReflective? vec3(1):color)*ray.color.rgb*reflection;
-				reflection *= clamp(ray.reflection, 0, 0.5);
-				rayPosition += reflectDirection * ray.hitDistance;
-				reflectDirection = normalize(reflect(reflectDirection, ray.normal));
+		firstRay = ray;
+		
+		// // Transparent
+		// if (OPTION_TRANSPARENCY && ray.color.a > 0 && ray.color.a < 0.995) {
+		// 	float translucency = 1.0 - clamp(abs(ray.color.a), 0.01, 1);
+		// 	SET_RT_PAYLOAD_FLAG(RT_PAYLOAD_FLAG_TRANSPARENT_RAY)
+		// 	while (ray.hitDistance > 0 && translucency > 0.01 && ray.color.a > 0) {
+		// 		vec3 worldPos = ray.nextPosition;
+		// 		ray.hitDistance = 0;
+		// 		ray.bounces = 0;
+		// 		traceRayEXT(tlas, 0, RENDERABLE_STANDARD, 0/*rayType*/, SBT_HITGROUPS_PER_GEOMETRY/*nbRayTypes*/, 0/*missIndex*/, worldPos, cam.zNear, initialRayDirection, cam.zFar, RAY_PAYLOAD_PRIMARY);
+		// 		ApplyFog(worldPos, initialRayDirection);
+		// 		color = mix(color, ray.color.rgb, translucency);
+		// 		translucency *= 1.0 - clamp(abs(ray.color.a), 0.01, 1);
+		// 	}
+		// 	UNSET_RT_PAYLOAD_FLAG(RT_PAYLOAD_FLAG_TRANSPARENT_RAY)
+		// }
+		
+		// Reflection
+		if (OPTION_REFLECTIONS) {
+			if (ray.hitDistance > 0) {
+				bool isBothTransparentAndReflective = (ray.color.a < 1); // Typically for Water
+				vec3 rayPosition = firstRayHitWorldPosition;
+				vec3 reflectDirection = reflect(initialRayDirection, firstRay.normal);
+				float reflection = firstRay.reflection;
+				SET_RT_PAYLOAD_FLAG(RT_PAYLOAD_FLAG_REFLECTION_RAY)
+				while (reflection > 0.01) {
+					if (dot(reflectDirection, reflectDirection) == 0) break;
+					ray.hitDistance = 0;
+					ray.bounces = 0;
+					traceRayEXT(tlas, 0, RENDERABLE_STANDARD, 0/*rayType*/, SBT_HITGROUPS_PER_GEOMETRY/*nbRayTypes*/, 0/*missIndex*/, rayPosition, cam.zNear, reflectDirection, cam.zFar, RAY_PAYLOAD_PRIMARY);
+					ApplyFog(rayPosition, reflectDirection);
+					color += /*(isBothTransparentAndReflective? vec3(1):color) * */ray.color.rgb*reflection;
+					reflection *= clamp(ray.reflection, 0, 0.5);
+					rayPosition += reflectDirection * ray.hitDistance;
+					reflectDirection = normalize(reflect(reflectDirection, ray.normal));
+				}
+				UNSET_RT_PAYLOAD_FLAG(RT_PAYLOAD_FLAG_REFLECTION_RAY)
 			}
-			UNSET_RT_PAYLOAD_FLAG(RT_PAYLOAD_FLAG_REFLECTION_RAY)
 		}
-	}
-	
-	// Horizon
-	if ((pushConstant.traceTypes & TRACE_TYPE_FOG) != 0) {
+		
+		// Horizon
 		if (hitSomething) color.rgb = mix(color.rgb, GetSkyColor(initialRayDirection), smoothstep(1000, camera.zFar, firstRay.hitDistance));
-	}
 	
-	if ((pushConstant.traceTypes & TRACE_TYPE_PRIMARY) != 0) {
 		// Aim
 		if (isMiddleOfScreen) {
 			renderer.aim.localPosition = firstRay.localPosition;
@@ -1407,73 +1412,151 @@ void main() {
 			motion = ndc_history.xyz - ndc.xyz;
 			depth = 0;
 		}
-	}
-	
-	// Write final images
-	imageStore(img_depth, imgCoords, vec4(depth));
-	imageStore(img_motion, imgCoords, vec4(motion, 0));
-	imageStore(img_composite, imgCoords, vec4(clamp(color, vec3(0), vec3(1e3)), firstRay.color.a));
-	
-	if (camera.debugViewMode == 0) {
-		// Special image
 		
-		float blurAmount = 0;
-		if ((RT_PAYLOAD_FLAGS & RT_PAYLOAD_FLAG_UNDERWATER) != 0) {
-			blurAmount = (Simplex(vec3(uv*9, float(renderer.timestamp))) + 1) * 3;
+		// Write final images
+		imageStore(img_depth, imgCoords, vec4(depth));
+		imageStore(img_motion, imgCoords, vec4(motion, 0));
+		imageStore(img_composite, imgCoords, vec4(clamp(color, vec3(0), vec3(1e3)), firstRay.color.a));
+		
+		if (camera.debugViewMode == 0) {
+			// Special image
+			
+			if ((pushConstant.traceTypes & TRACE_TYPE_FOG) != 0) {
+				float blurAmount = 0;
+				if ((RT_PAYLOAD_FLAGS & RT_PAYLOAD_FLAG_UNDERWATER) != 0) {
+					blurAmount = (Simplex(vec3(uv*9, float(renderer.timestamp))) + 1) * 3;
+				}
+				imageStore(img_debug, imgCoords, vec4(0,0,0, blurAmount));
+			} else {
+				imageStore(img_debug, imgCoords, vec4(firstRay.normal, firstRay.reflection));
+			}
+			
+		} else {
+			// Debug View Modes
+			switch (camera.debugViewMode) {
+				case RENDERER_DEBUG_MODE_RAYGEN_TIME:
+					WRITE_DEBUG_TIME
+					break;
+				case RENDERER_DEBUG_MODE_NORMALS:
+					imageStore(img_debug, imgCoords, vec4(normalize(WORLD2VIEWNORMAL * firstRay.normal), 1));
+					break;
+				case RENDERER_DEBUG_MODE_MOTION:
+					imageStore(img_debug, imgCoords, vec4(abs(motion * 100), 1));
+					break;
+				case RENDERER_DEBUG_MODE_DISTANCE:
+					imageStore(img_debug, imgCoords, vec4(Heatmap(pow(firstRay.hitDistance / 1000, 0.4)), 1));
+					break;
+				case RENDERER_DEBUG_MODE_REFLECTIVITY:
+					imageStore(img_debug, imgCoords, vec4(vec3(firstRay.reflection), 1));
+					break;
+				case RENDERER_DEBUG_MODE_TRANSPARENCY:
+					imageStore(img_debug, imgCoords, vec4(vec3(1 - firstRay.color.a), 1));
+					break;
+				case RENDERER_DEBUG_MODE_AIM_RENDERABLE:
+					if (renderer.aim.tlasInstanceIndex == firstRay.tlasInstanceIndex) {
+						imageStore(img_debug, imgCoords, vec4(1,0,1, 0.5));
+					}
+					break;
+				case RENDERER_DEBUG_MODE_AIM_GEOMETRY: 
+					if (renderer.aim.tlasInstanceIndex == firstRay.tlasInstanceIndex && (renderer.aim.aimGeometryID & ((1u<<12)-1)) == (firstRay.index.x & ((1u<<12)-1))) {
+						imageStore(img_debug, imgCoords, vec4(1,0,1, 0.5));
+					}
+					break;
+				case RENDERER_DEBUG_MODE_AIM_PRIMITIVE:
+					if (renderer.aim.tlasInstanceIndex == firstRay.tlasInstanceIndex && (renderer.aim.aimGeometryID & ((1u<<12)-1)) == (firstRay.index.x & ((1u<<12)-1)) && renderer.aim.aabbIndex == firstRay.index.y) {
+						imageStore(img_debug, imgCoords, vec4(1,0,1, 0.5));
+					}
+					break;
+				case RENDERER_DEBUG_MODE_TRACE_RAY_COUNT:
+					float nbRays = imageLoad(img_debug, imgCoords).a-1;
+					imageStore(img_debug, imgCoords, vec4(nbRays > 0? Heatmap(nbRays / (8 + renderer.fogSteps)) : vec3(0), 1));
+					break;
+				case RENDERER_DEBUG_MODE_GLOBAL_ILLUMINATION:
+					if (hitSomething) {
+						vec3 giWorldPos = firstRayHitWorldPosition + firstRay.normal * 0.01;
+						vec3 gi = GetGi(GetGiIndex(ivec3(round(giWorldPos)))).radiance.rgb;
+						gi = pow(gi, vec3(1.0 / camera.gamma));
+						imageStore(img_debug, imgCoords, vec4(gi, 1));
+					}
+					break;
+			}
+		}
+	} else if (pushConstant.outputIndex == 1) {
+		
+		vec4 inputColors[16];
+		vec4 inputNormals[16];
+		vec3 avgColor = vec3(0);
+		vec3 avgNormal = vec3(0);
+		float avgReflection = 0;
+		float avgOpacity = 0;
+		float avgDepth = 0;
+		float minDepth = 1;
+		{// Read color from previous pass
+			uint i = 0;
+			for (int x = 0; x < pushConstant.scale; ++x) {
+				for (int y = 0; y < pushConstant.scale; ++y) {
+					ivec2 coords = imgCoords * int(pushConstant.scale) + ivec2(x,y);
+					inputColors[i] = imageLoad(img_composite, coords);
+					vec4 normalAndReflection = imageLoad(img_debug, coords);
+					avgColor += inputColors[i].rgb;
+					avgNormal += normalAndReflection.xyz;
+					avgReflection += normalAndReflection.a;
+					avgOpacity += inputColors[i].a;
+					float depth = imageLoad(img_depth, coords).r;
+					avgDepth += depth;
+					minDepth = min(minDepth, depth);
+					++i;
+				}
+			}
+			avgColor /= i;
+			avgNormal = normalize(avgNormal / i);
+			avgReflection /= i;
+			avgOpacity /= i;
+			avgDepth /= i;
 		}
 		
-		imageStore(img_debug, imgCoords, vec4(0,0,0, blurAmount));
+		if (camera.debugViewMode == 0) {
+			imageStore(img_debug, imgCoords, vec4(0));
+		}
 		
-	} else {
-		// Debug View Modes
-		switch (camera.debugViewMode) {
-			case RENDERER_DEBUG_MODE_RAYGEN_TIME:
-				WRITE_DEBUG_TIME
-				break;
-			case RENDERER_DEBUG_MODE_NORMALS:
-				imageStore(img_debug, imgCoords, vec4(normalize(WORLD2VIEWNORMAL * firstRay.normal), 1));
-				break;
-			case RENDERER_DEBUG_MODE_MOTION:
-				imageStore(img_debug, imgCoords, vec4(abs(motion * 100), 1));
-				break;
-			case RENDERER_DEBUG_MODE_DISTANCE:
-				imageStore(img_debug, imgCoords, vec4(Heatmap(pow(firstRay.hitDistance / 1000, 0.4)), 1));
-				break;
-			case RENDERER_DEBUG_MODE_REFLECTIVITY:
-				imageStore(img_debug, imgCoords, vec4(vec3(firstRay.reflection), 1));
-				break;
-			case RENDERER_DEBUG_MODE_TRANSPARENCY:
-				imageStore(img_debug, imgCoords, vec4(vec3(1 - firstRay.color.a), 1));
-				break;
-			case RENDERER_DEBUG_MODE_AIM_RENDERABLE:
-				if (renderer.aim.tlasInstanceIndex == firstRay.tlasInstanceIndex) {
-					imageStore(img_debug, imgCoords, vec4(1,0,1, 0.5));
+		if (minDepth == 0) return;
+		if (avgOpacity > 0.99) return;
+		if (avgReflection > 0.99) return;
+		
+		vec3 viewSpacePosition = GetViewSpacePositionFromDepthAndUV(minDepth, uv);
+		float dist = length(viewSpacePosition);
+		
+		// Final data to write
+		float depth;
+		vec3 motion;
+		vec3 color;
+		
+		vec3 firstRayHitWorldPosition;
+		bool hitSomething;
+		RayPayload firstRay;
+		
+		// Initialize ray payload
+		ray.totalDistanceFromEye = 0;
+		// Launch Primary Ray
+		ray.hitDistance = 0;
+		ray.bounces = 0;
+		traceRayEXT(tlas, 0, RENDERABLE_PRIMARY, 0/*rayType*/, SBT_HITGROUPS_PER_GEOMETRY/*nbRayTypes*/, 0/*missIndex*/, initialRayPosition, dist*0.9, initialRayDirection, dist*1.1, RAY_PAYLOAD_PRIMARY);
+		ApplyFog(initialRayPosition, initialRayDirection);
+		firstRayHitWorldPosition = initialRayPosition + initialRayDirection * ray.hitDistance;
+		hitSomething = ray.hitDistance > 0 && ray.tlasInstanceIndex > -1;
+		color = ray.color.rgb;
+		firstRay = ray;
+		
+		{// Write final output color
+			uint i = 0;
+			for (int x = 0; x < pushConstant.scale; ++x) {
+				for (int y = 0; y < pushConstant.scale; ++y) {
+					vec4 inputColor = inputColors[i++];
+					vec3 outputColor = mix(color, inputColor.rgb, clamp(inputColor.a + avgReflection, 0, 1));
+					imageStore(img_composite, imgCoords * int(pushConstant.scale) + ivec2(x,y), vec4(outputColor, 1));
 				}
-				break;
-			case RENDERER_DEBUG_MODE_AIM_GEOMETRY: 
-				if (renderer.aim.tlasInstanceIndex == firstRay.tlasInstanceIndex && (renderer.aim.aimGeometryID & ((1u<<12)-1)) == (firstRay.index.x & ((1u<<12)-1))) {
-					imageStore(img_debug, imgCoords, vec4(1,0,1, 0.5));
-				}
-				break;
-			case RENDERER_DEBUG_MODE_AIM_PRIMITIVE:
-				if (renderer.aim.tlasInstanceIndex == firstRay.tlasInstanceIndex && (renderer.aim.aimGeometryID & ((1u<<12)-1)) == (firstRay.index.x & ((1u<<12)-1)) && renderer.aim.aabbIndex == firstRay.index.y) {
-					imageStore(img_debug, imgCoords, vec4(1,0,1, 0.5));
-				}
-				break;
-			case RENDERER_DEBUG_MODE_TRACE_RAY_COUNT:
-				float nbRays = imageLoad(img_debug, imgCoords).a-1;
-				imageStore(img_debug, imgCoords, vec4(nbRays > 0? Heatmap(nbRays / (8 + renderer.fogSteps)) : vec3(0), 1));
-				break;
-			case RENDERER_DEBUG_MODE_GLOBAL_ILLUMINATION:
-				if (hitSomething) {
-					vec3 giWorldPos = firstRayHitWorldPosition + firstRay.normal * 0.01;
-					vec3 gi = GetGi(GetGiIndex(ivec3(round(giWorldPos)))).radiance.rgb;
-					gi = pow(gi, vec3(1.0 / camera.gamma));
-					imageStore(img_debug, imgCoords, vec4(gi, 1));
-				}
-				break;
+			}
 		}
 	}
-
 }
 

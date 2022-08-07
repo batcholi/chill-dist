@@ -385,6 +385,18 @@ float GetFragDepthFromWorldSpacePosition(vec3 worldSpacePos) {
 	return clipSpace.z / clipSpace.w;
 }
 
+vec3 GetViewSpacePositionFromDepthAndUV(float depth, vec2 uv) {
+	vec4 viewSpacePos = inverse(camera.projectionMatrixWithTAA) * vec4((uv * 2 - 1), depth, 1);
+	viewSpacePos.xyz /= viewSpacePos.w;
+	if (depth == 0) viewSpacePos.z = camera.zFar;
+	return viewSpacePos.xyz;
+}
+
+float GetTrueDistanceFromDepthBuffer(float depth) {
+	if (depth == 0 || depth == 1) return camera.zFar;
+	return 2.0 * (camera.zFar * camera.zNear) / (camera.zNear + camera.zFar - (depth * 2.0 - 1.0) * (camera.zNear - camera.zFar));
+}
+
 vec3 VarianceClamp5(in vec3 color, in sampler2D tex, in vec2 uv) {
 	vec3 nearColor0 = texture(tex, uv).rgb;
 	vec3 nearColor1 = textureLodOffset(tex, uv, 0.0, ivec2( 1,  0)).rgb;
@@ -762,7 +774,7 @@ vec3 RandomInUnitSphere(inout uint seed) {
 #define RENDERER_DEBUG_MODE_GLOBAL_ILLUMINATION 14
 #define RENDERER_DEBUG_MODE_TEST 15
 
-#define TRACE_TYPE_PRIMARY (1u<< 0)
+#define TRACE_TYPE_ALL (1u<< 0)
 #define TRACE_TYPE_TRANSPARENT (1u<< 1)
 #define TRACE_TYPE_REFLECTION (1u<< 2)
 #define TRACE_TYPE_FOG (1u<< 3)
@@ -832,10 +844,10 @@ layout(set = 1, binding = SET1_BINDING_RENDERER_DATA) buffer RendererDataBuffer 
 layout(set = 1, binding = SET1_BINDING_RT_PAYLOAD_IMAGE, r32ui) uniform uimage2D rtPayloadImage;
 
 bool OPTION_TEXTURES = ((renderer.options & RENDERER_OPTION_TEXTURES) != 0);
-bool OPTION_REFLECTIONS = ((renderer.options & RENDERER_OPTION_REFLECTIONS) != 0 && (pushConstant.traceTypes & TRACE_TYPE_REFLECTION) != 0);
-bool OPTION_TRANSPARENCY = ((renderer.options & RENDERER_OPTION_TRANSPARENCY) != 0 && (pushConstant.traceTypes & TRACE_TYPE_TRANSPARENT) != 0);
-bool OPTION_INDIRECT_LIGHTING = ((renderer.options & RENDERER_OPTION_INDIRECT_LIGHTING) != 0 && (pushConstant.traceTypes & TRACE_TYPE_GI) != 0);
-bool OPTION_DIRECT_LIGHTING = ((renderer.options & RENDERER_OPTION_DIRECT_LIGHTING) != 0 && (pushConstant.traceTypes & TRACE_TYPE_DIRECT_LIGHTING) != 0);
+bool OPTION_REFLECTIONS = ((renderer.options & RENDERER_OPTION_REFLECTIONS) != 0);
+bool OPTION_TRANSPARENCY = ((renderer.options & RENDERER_OPTION_TRANSPARENCY) != 0);
+bool OPTION_INDIRECT_LIGHTING = ((renderer.options & RENDERER_OPTION_INDIRECT_LIGHTING) != 0);
+bool OPTION_DIRECT_LIGHTING = ((renderer.options & RENDERER_OPTION_DIRECT_LIGHTING) != 0);
 bool OPTION_SOFT_SHADOWS = ((renderer.options & RENDERER_OPTION_SOFT_SHADOWS) != 0);
 
 #define RAY_MAX_RECURSION 8
@@ -1073,7 +1085,7 @@ uint seed = InitRandomSeed(InitRandomSeed(gl_LaunchIDEXT.x, gl_LaunchIDEXT.y), u
 	layout(set = 1, binding = SET1_BINDING_TLAS) uniform accelerationStructureEXT tlas;
 
 	void ApplyFog(in vec3 origin, in vec3 dir) {
-		if ((pushConstant.traceTypes & TRACE_TYPE_FOG) != 0 && (RT_PAYLOAD_FLAGS & RT_PAYLOAD_FLAG_UNDERWATER) == 0) {
+		if ((RT_PAYLOAD_FLAGS & RT_PAYLOAD_FLAG_UNDERWATER) == 0) {
 			const float dist = ray.hitDistance > 0 ? ray.hitDistance : renderer.fogEndDistance;
 			const float sunIncidentAngle = dot(-renderer.sunDir, dir);
 			const float distFactor = min(1, smoothstep(renderer.fogStartDistance, renderer.fogEndDistance, dist));
@@ -1533,9 +1545,11 @@ STATIC_ASSERT_ALIGNED16_SIZE(ChunkData, 16);
 		float metallic; // set negative value to automatically apply a shiny clearcoat Fresnel-based reflection, the absolute value will be used as the reflection logarithm
 		vec2 uv;
 		float ior;
-		uint64_t fill;
+		uint16_t voxelIndex;
 		uint8_t data;
 		uint8_t face;
+		uint64_t fill;
+		uint64_t chunkAddr;
 	};
 	#define VOXEL_SURFACE_CALLABLE 0
 	#if defined(SHADER_RCHIT)
@@ -1562,7 +1576,7 @@ STATIC_ASSERT_ALIGNED16_SIZE(ChunkData, 16);
 	#define GI_SAMPLES_FALLOFF_END_DISTANCE 25
 	#define GI_MIN_DISTANCE 0.1 // camera.zNear
 	#define GI_MAX_DISTANCE camera.zFar
-	#define MAX_ACCUMULATION 128
+	#define MAX_ACCUMULATION 500
 	#define ACCUMULATOR_MAX_FRAME_INDEX_DIFF 500
 
 	vec3 GetAmbientVoxelLighting(in vec3 albedo, in ivec3 voxelPosInChunk, in vec3 posInVoxel) {
@@ -1607,7 +1621,7 @@ STATIC_ASSERT_ALIGNED16_SIZE(ChunkData, 16);
 			
 			float dist = length((camera.viewMatrix * vec4(facingWorldPos, 1)).xyz);
 			
-			int maxBounces = min(RAY_MAX_RECURSION, (dist > GI_2_BOUNCES_MAX_DISTANCE? 1:2) + (isUnderWater?1:0));
+			int maxBounces = min(RAY_MAX_RECURSION, (dist > GI_2_BOUNCES_MAX_DISTANCE? 1 : (isUnderWater?3:2)));
 			
 			if (ray.bounces < maxBounces) {
 				
@@ -1770,13 +1784,10 @@ STATIC_ASSERT_ALIGNED16_SIZE(ChunkData, 16);
 
 /////////////////////////////////////////////////////////////
 
-hitAttributeEXT hit {
-	VOXEL_INDEX_TYPE voxelIndex;
-	uint8_t normalIndex;
-};
+hitAttributeEXT VOXEL_INDEX_TYPE voxelIndex;
 
 
-#line 230 "/home/olivier/projects/chill/src/v4d/modules/CHILL_terrain/assets/shaders/voxel.glsl"
+#line 227 "/home/olivier/projects/chill/src/v4d/modules/CHILL_terrain/assets/shaders/voxel.glsl"
 
 bool IsValidVoxel(in ivec3 iPos, in vec3 gridOffset) {
 	if (iPos.x < 0 || iPos.y < 0 || iPos.z < 0) return false;
@@ -1807,13 +1818,13 @@ void ReportIntersection(in vec3 pos, in vec3 rayOrigin, in vec3 rayDir, in bvec3
 	const vec3 tmin = min((pos - rayOrigin) / rayDir, (pos + voxelSize - rayOrigin) / rayDir);
 	const float T = max(gl_RayTminEXT, max(tmin.x, max(tmin.y, tmin.z)));
 	// Store Normal Index in gl_HitKindEXT
-	normalIndex = uint8_t(
+	uint8_t normalIndex = uint8_t(
 		  int(bNormalMask.x) * (3 - 3 * max(0, iStepDir.x))
 		+ int(bNormalMask.y) * (4 - 3 * max(0, iStepDir.y))
 		+ int(bNormalMask.z) * (5 - 3 * max(0, iStepDir.z))
 	);
 	if (camera.debugViewMode == RENDERER_DEBUG_MODE_RAYINT_TIME) WRITE_DEBUG_TIME
-	reportIntersectionEXT(T, 0);
+	reportIntersectionEXT(T, normalIndex);
 }
 
 void ReportIntersection(in float t, in uint hitKind) {
@@ -1827,104 +1838,99 @@ const float maxHdVoxelDistance = 100;
 
 void main() {
 	uint flags = RT_PAYLOAD_FLAGS;
-	// if ((flags & RT_PAYLOAD_FLAG_FOG_RAY) != 0) {
-	// 	reportIntersectionEXT(gl_RayTminEXT, 0);
-	// 	return;
-	// }
 	if (AABB.extra == 0) return;
 	ChunkData chunk = ChunkData(AABB.extra);
 	if (uint64_t(chunk.voxels) == 0) return;
 	COMPUTE_BOX_INTERSECTION // retrieves T1 and T2
-	if (T1 < gl_RayTmaxEXT && T2 > T1 && T2 > gl_RayTminEXT) {
-		ChunkVoxelData voxelData = chunk.voxels;
-		if (voxelData.voxelSize == 0) return;
-		if (voxelData.voxelSize == 1 /*&& ((flags & (RT_PAYLOAD_FLAG_GI_RAY|RT_PAYLOAD_FLAG_FOG_RAY)) == 0)*/) {
-			const float startT = max(gl_RayTminEXT, T1 - EPSILON * voxelData.voxelSize * 10);
-			const float endT   = min(gl_RayTmaxEXT, T2 + EPSILON * voxelData.voxelSize * 10);
-			const bool enableHdVoxels = voxelData.voxelSize == 1 && startT < maxHdVoxelDistance;
-			const int maxIterations = int(ceil(endT - startT)) * 3 + 1;
-			const vec3 rayDir = gl_ObjectRayDirectionEXT;
-			const vec3 stepDir = sign(rayDir);
-			const ivec3 iStepDir = ivec3(stepDir);
-			const vec3 gridOffset = vec3(VOXEL_GRID_OFFSET) + vec3(voxelData.aabbOffset) * voxelData.voxelSize;
-			const vec3 rayOrigin = gl_ObjectRayOriginEXT - gridOffset;
-			const vec3 rayPos = (rayOrigin + rayDir * startT) / voxelData.voxelSize;
-			const vec3 stepSize = abs(1.0 / rayDir);
-			const ivec3 iOutOfBound = ivec3((rayOrigin + gl_ObjectRayDirectionEXT * endT) / voxelData.voxelSize) + iStepDir;
-			
-			ivec3 iPos = ivec3(floor(rayPos));
-			bvec3 bNormalMask = bvec3(false);
-			vec3 travelDist = (stepDir * (vec3(iPos) - rayPos) + (stepDir * 0.5) + 0.5) * stepSize;
-			
-			for (int i = 0; i < maxIterations; i++) {
-				if (IsValidVoxel(iPos, gridOffset)) {
-					voxelIndex = VoxelIndex(iPos.x, iPos.y, iPos.z);
-					const uint64_t fill = voxelData.fill[voxelIndex];
-					if (fill != VOXEL_EMPTY) {
-						if (fill == VOXEL_FULL || !enableHdVoxels) {
-							ReportIntersection(vec3(iPos) * voxelData.voxelSize, rayOrigin, rayDir, bNormalMask, iStepDir, voxelData.voxelSize);
-							return;
-						} else {
-							
-							// Aim Wireframe
-							if (renderer.aim.aimGeometryID == AIM_GEOMETRY_ID && renderer.aim.aabbIndex == gl_PrimitiveID) {
-								const vec3 tmin = min((vec3(iPos) - rayOrigin) / rayDir, (vec3(iPos) + voxelData.voxelSize - rayOrigin) / rayDir);
-								const float T = max(gl_RayTminEXT, max(tmin.x, max(tmin.y, tmin.z)));
-								const vec3 hitPosRelativeToStack = gl_ObjectRayOriginEXT + gl_ObjectRayDirectionEXT * T;
-								if (ivec3(round(renderer.aim.localPosition - renderer.aim.worldSpaceHitNormal*0.01)) == ivec3(round(hitPosRelativeToStack + gl_ObjectRayDirectionEXT * 0.01))) {
-									const vec3 hitPosRelativeToVoxel = hitPosRelativeToStack - vec3(iPos) - gridOffset;
-									const vec3 distFromCenter = abs(hitPosRelativeToVoxel - 0.5);
-									const float thickness = renderer.wireframeThickness * camera.renderScale * max(1, T);
-									const float theshold = 0.5 - thickness;
-									if (step(theshold, distFromCenter.x) + step(theshold, distFromCenter.y) + step(theshold, distFromCenter.z) > 1) {
-										ReportIntersection(vec3(iPos) * voxelData.voxelSize, rayOrigin, rayDir, bNormalMask, iStepDir, voxelData.voxelSize);
-										return;
-									}
-								}
-							}
-							
-							const vec3 tmin = min((vec3(iPos) - rayOrigin) / rayDir, (vec3(iPos+1) - rayOrigin) / rayDir);
+	ChunkVoxelData voxelData = chunk.voxels;
+	if (voxelData.voxelSize == 0) return;
+	if (voxelData.voxelSize == 1 /*&& ((flags & (RT_PAYLOAD_FLAG_GI_RAY|RT_PAYLOAD_FLAG_FOG_RAY)) == 0)*/) {
+		const float startT = max(gl_RayTminEXT, T1 - EPSILON * voxelData.voxelSize * 10);
+		const float endT   = min(gl_RayTmaxEXT, T2 + EPSILON * voxelData.voxelSize * 10);
+		const bool enableHdVoxels = voxelData.voxelSize == 1 && startT < maxHdVoxelDistance;
+		const int maxIterations = int(ceil(endT - startT)) * 3 + 1;
+		const vec3 rayDir = gl_ObjectRayDirectionEXT;
+		const vec3 stepDir = sign(rayDir);
+		const ivec3 iStepDir = ivec3(stepDir);
+		const vec3 gridOffset = vec3(VOXEL_GRID_OFFSET) + vec3(voxelData.aabbOffset) * voxelData.voxelSize;
+		const vec3 rayOrigin = gl_ObjectRayOriginEXT - gridOffset;
+		const vec3 rayPos = (rayOrigin + rayDir * startT) / voxelData.voxelSize;
+		const vec3 stepSize = abs(1.0 / rayDir);
+		const ivec3 iOutOfBound = ivec3((rayOrigin + gl_ObjectRayDirectionEXT * endT) / voxelData.voxelSize) + iStepDir;
+		
+		ivec3 iPos = ivec3(floor(rayPos));
+		bvec3 bNormalMask = bvec3(false);
+		vec3 travelDist = (stepDir * (vec3(iPos) - rayPos) + (stepDir * 0.5) + 0.5) * stepSize;
+		
+		for (int i = 0; i < maxIterations; i++) {
+			if (IsValidVoxel(iPos, gridOffset)) {
+				voxelIndex = VoxelIndex(iPos.x, iPos.y, iPos.z);
+				const uint64_t fill = voxelData.fill[voxelIndex];
+				if (fill != VOXEL_EMPTY) {
+					if (fill == VOXEL_FULL || !enableHdVoxels) {
+						ReportIntersection(vec3(iPos) * voxelData.voxelSize, rayOrigin, rayDir, bNormalMask, iStepDir, voxelData.voxelSize);
+						return;
+					} else {
+						
+						// Aim Wireframe
+						if (renderer.aim.aimGeometryID == AIM_GEOMETRY_ID && renderer.aim.aabbIndex == gl_PrimitiveID) {
+							const vec3 tmin = min((vec3(iPos) - rayOrigin) / rayDir, (vec3(iPos) + voxelData.voxelSize - rayOrigin) / rayDir);
 							const float T = max(gl_RayTminEXT, max(tmin.x, max(tmin.y, tmin.z)));
-							const vec3 rayPos_hd = (rayOrigin + rayDir * T - vec3(iPos)) * VOXEL_GRID_SIZE_HD - stepDir*EPSILON;
-							
-							ivec3 iPos_hd = ivec3(floor(rayPos_hd));
-							bvec3 bNormalMask_hd = bNormalMask;
-							vec3 travelDist_hd = (stepDir * (vec3(iPos_hd) - rayPos_hd) + (stepDir * 0.5) + 0.5) * stepSize;
-							
-							for (int j = 0; j < maxIterations_hd; j++) {
-								if (IsValidVoxelHD(iPos_hd)) {
-									if ((fill & VoxelFillBitHD(iPos_hd)) != 0) {
-										ReportIntersection((vec3(iPos_hd)/VOXEL_GRID_SIZE_HD + vec3(iPos)), rayOrigin, rayDir, bNormalMask_hd, iStepDir, 1.0/VOXEL_GRID_SIZE_HD);
-										return;
-									}
+							const vec3 hitPosRelativeToStack = gl_ObjectRayOriginEXT + gl_ObjectRayDirectionEXT * T;
+							if (ivec3(round(renderer.aim.localPosition - renderer.aim.worldSpaceHitNormal*0.01)) == ivec3(round(hitPosRelativeToStack + gl_ObjectRayDirectionEXT * 0.01))) {
+								const vec3 hitPosRelativeToVoxel = hitPosRelativeToStack - vec3(iPos) - gridOffset;
+								const vec3 distFromCenter = abs(hitPosRelativeToVoxel - 0.5);
+								const float thickness = renderer.wireframeThickness * camera.renderScale * max(1, T);
+								const float theshold = 0.5 - thickness;
+								if (step(theshold, distFromCenter.x) + step(theshold, distFromCenter.y) + step(theshold, distFromCenter.z) > 1) {
+									ReportIntersection(vec3(iPos) * voxelData.voxelSize, rayOrigin, rayDir, bNormalMask, iStepDir, voxelData.voxelSize);
+									return;
 								}
-								// Fast DDA
-								NextStepDDA(bNormalMask_hd, iPos_hd, travelDist_hd, iStepDir, stepSize);
-								// Early Exit when out of bounds
-								if (iPos_hd.x == VOXEL_GRID_SIZE_HD || iPos_hd.y == VOXEL_GRID_SIZE_HD || iPos_hd.z == VOXEL_GRID_SIZE_HD) break;
 							}
+						}
+						
+						const vec3 tmin = min((vec3(iPos) - rayOrigin) / rayDir, (vec3(iPos+1) - rayOrigin) / rayDir);
+						const float T = max(gl_RayTminEXT, max(tmin.x, max(tmin.y, tmin.z)));
+						const vec3 rayPos_hd = (rayOrigin + rayDir * T - vec3(iPos)) * VOXEL_GRID_SIZE_HD - stepDir*EPSILON;
+						
+						ivec3 iPos_hd = ivec3(floor(rayPos_hd));
+						bvec3 bNormalMask_hd = bNormalMask;
+						vec3 travelDist_hd = (stepDir * (vec3(iPos_hd) - rayPos_hd) + (stepDir * 0.5) + 0.5) * stepSize;
+						
+						for (int j = 0; j < maxIterations_hd; j++) {
+							if (IsValidVoxelHD(iPos_hd)) {
+								if ((fill & VoxelFillBitHD(iPos_hd)) != 0) {
+									ReportIntersection((vec3(iPos_hd)/VOXEL_GRID_SIZE_HD + vec3(iPos)), rayOrigin, rayDir, bNormalMask_hd, iStepDir, 1.0/VOXEL_GRID_SIZE_HD);
+									return;
+								}
+							}
+							// Fast DDA
+							NextStepDDA(bNormalMask_hd, iPos_hd, travelDist_hd, iStepDir, stepSize);
+							// Early Exit when out of bounds
+							if (iPos_hd.x == VOXEL_GRID_SIZE_HD || iPos_hd.y == VOXEL_GRID_SIZE_HD || iPos_hd.z == VOXEL_GRID_SIZE_HD) break;
 						}
 					}
 				}
-				// Fast DDA
-				NextStepDDA(bNormalMask, iPos, travelDist, iStepDir, stepSize);
-				// Early Exit when out of bounds
-				if (iPos.x == iOutOfBound.x || iPos.y == iOutOfBound.y || iPos.z == iOutOfBound.z) return;
 			}
-		} else {
-			const vec3 localPosition = gl_ObjectRayOriginEXT + gl_ObjectRayDirectionEXT * T1;
-			const vec3 absMin = abs(localPosition.xyz - AABB_MIN.xyz);
-			const vec3 absMax = abs(localPosition.xyz - AABB_MAX.xyz);
-				 if (absMin.x < EPSILON) normalIndex = uint8_t(0);
-			else if (absMin.y < EPSILON) normalIndex = uint8_t(1);
-			else if (absMin.z < EPSILON) normalIndex = uint8_t(2);
-			else if (absMax.x < EPSILON) normalIndex = uint8_t(3);
-			else if (absMax.y < EPSILON) normalIndex = uint8_t(4);
-			else if (absMax.z < EPSILON) normalIndex = uint8_t(5);
-			ivec3 iPos = ivec3(round(localPosition));
-			voxelIndex = VoxelIndex(iPos.x, iPos.y % VOXELS_Y, iPos.z);
-			ReportIntersection(T1, 0);
+			// Fast DDA
+			NextStepDDA(bNormalMask, iPos, travelDist, iStepDir, stepSize);
+			// Early Exit when out of bounds
+			if (iPos.x == iOutOfBound.x || iPos.y == iOutOfBound.y || iPos.z == iOutOfBound.z) return;
 		}
+	} else {
+		const vec3 localPosition = gl_ObjectRayOriginEXT + gl_ObjectRayDirectionEXT * T1;
+		const vec3 absMin = abs(localPosition.xyz - AABB_MIN.xyz);
+		const vec3 absMax = abs(localPosition.xyz - AABB_MAX.xyz);
+		uint8_t normalIndex;
+				if (absMin.x < EPSILON) normalIndex = uint8_t(0);
+		else if (absMin.y < EPSILON) normalIndex = uint8_t(1);
+		else if (absMin.z < EPSILON) normalIndex = uint8_t(2);
+		else if (absMax.x < EPSILON) normalIndex = uint8_t(3);
+		else if (absMax.y < EPSILON) normalIndex = uint8_t(4);
+		else if (absMax.z < EPSILON) normalIndex = uint8_t(5);
+		ivec3 iPos = ivec3(round(localPosition));
+		voxelIndex = VoxelIndex(iPos.x, iPos.y % VOXELS_Y, iPos.z);
+		ReportIntersection(T1, normalIndex);
 	}
 }
 
