@@ -2,10 +2,10 @@ echo WATCHING: "/home/olivier/projects/chill/build/debug/modules/V4D_rtcubes/ass
 inotifywait -e modify \
   '/home/olivier/projects/chill/src/v4d/modules/V4D_rtcubes/assets/shaders/raytracing.glsl'\
   '/home/olivier/projects/chill/src/v4d/modules/V4D_rtcubes/cpp_glsl.hh'\
-  '/home/olivier/projects/chill/src/v4d/modules/V4D_rtcubes/assets/shaders/../../noise.glsl'\
   '/home/olivier/projects/chill/src/v4d/modules/V4D_rtcubes/base.glsl'\
   '/home/olivier/projects/chill/src/v4d/game/graphics/glsl/base.glsl'\
   '/home/olivier/projects/chill/src/v4d/game/graphics/glsl/../cpp_glsl.hh'\
+  '/home/olivier/projects/chill/src/v4d/modules/V4D_rtcubes/noise.glsl'\
   '/home/olivier/projects/chill/src/v4d/core/v4d.h'\
   '/home/olivier/projects/chill/src/v4d/core/utilities/graphics/shaders/cpp_glsl_head.hh'
 
