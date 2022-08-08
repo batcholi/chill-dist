@@ -1166,7 +1166,7 @@ uint64_t startTime = clockARB();
 #define WATER_LEVEL renderer.waterLevel
 #define MAX_WATER_DEPTH renderer.waterMaxLightDepth
 
-uint seed = InitRandomSeed(InitRandomSeed(gl_LaunchIDEXT.x/16, gl_LaunchIDEXT.y/16), uint(camera.frameIndex));
+uint seed = InitRandomSeed(InitRandomSeed(gl_LaunchIDEXT.x, gl_LaunchIDEXT.y), uint(camera.frameIndex));
 
 #if defined(SHADER_RCHIT) || defined(SHADER_RGEN)
 	layout(set = 1, binding = SET1_BINDING_TLAS) uniform accelerationStructureEXT tlas;
@@ -1758,6 +1758,7 @@ STATIC_ASSERT_ALIGNED16_SIZE(ChunkData, 16);
 					++ray.bounces;
 					if (!isGiRay) SET_RT_PAYLOAD_FLAG(RT_PAYLOAD_FLAG_GI_RAY)
 					vec3 color = vec3(0);
+					seed = InitRandomSeed(InitRandomSeed(gl_LaunchIDEXT.x/16, gl_LaunchIDEXT.y/16), uint(camera.frameIndex));
 					for (int i = 0; i < sampleCount; ++i) {
 						vec3 randomBounceDirection = normalize(originalRay.normal * 0.5 + RandomInUnitSphere(seed));
 						if (i == 0 && accumulation == 1) randomBounceDirection = originalRay.normal;
@@ -1889,7 +1890,7 @@ STATIC_ASSERT_ALIGNED16_SIZE(ChunkData, 16);
 hitAttributeEXT VOXEL_INDEX_TYPE voxelIndex; // Because of a bug in AMD drivers, we CANNOT rely on hitAttributeEXT
 
 
-#line 379 "/home/olivier/projects/chill/src/v4d/modules/CHILL_terrain/assets/shaders/voxel.glsl"
+#line 380 "/home/olivier/projects/chill/src/v4d/modules/CHILL_terrain/assets/shaders/voxel.glsl"
 
 void main() {
 	CLOSEST_HIT_BEGIN
