@@ -1134,8 +1134,8 @@ uvec3 HashGlobalPosition3(uvec3 v) {
 }
 
 uint GetGiIndex(in ivec3 worldPosition) {
-	// uvec3 p = uvec3(worldPosition - renderer.worldOrigin + ivec3(1<<30));
-	uvec3 p = uvec3(worldPosition - renderer.worldOrigin);
+	uvec3 p = uvec3(worldPosition - renderer.worldOrigin + ivec3(1<<30));
+	// uvec3 p = uvec3(worldPosition - renderer.worldOrigin);
 	return HashGlobalPosition(p) % renderer.globalIlluminationTableCount;
 }
 #define GetGi(i) renderer.globalIllumination[i]
@@ -1328,34 +1328,35 @@ void ApplyUnderwaterFog() {
 
 	ray.color.rgb = mix(ray.color.rgb, vec3(0), pow(clamp(ray.hitDistance / MAX_WATER_DEPTH, 0, 1), 0.5));
 	
-	uint steps = max(inverse(camera.viewMatrix)[3].y - renderer.worldOrigin.y > WATER_LEVEL ? 1 : 8, renderer.fogSteps);
+	// uint steps = max(inverse(camera.viewMatrix)[3].y - renderer.worldOrigin.y > WATER_LEVEL ? 1 : 8, renderer.fogSteps);
 	
-	bool hitSunlight = false;
+	// bool hitSunlight = false;
 	
-	if (ray.bounces < RAY_MAX_RECURSION) {
-		const float fogAmount = fogStrength / steps;
-		RayPayload originalRay = ray;
-		++ray.bounces;
-		SET_RT_PAYLOAD_FLAG(RT_PAYLOAD_FLAG_FOG_RAY)
-		for (int i = 0; i < steps; ++i) {
-			float dist = RandomFloat(seed) * originalRay.hitDistance;
-			vec3 worldPos = origin + dir * dist;
-			ray.hitDistance = 0;
-			traceRayEXT(tlas, 0, RENDERABLE_PRIMARY_EXCEPT_WATER, 0/*rayType*/, SBT_HITGROUPS_PER_GEOMETRY/*nbRayTypes*/, 0/*missIndex*/, worldPos, 0, normalize(renderer.sunDir), camera.zFar, RAY_PAYLOAD_PRIMARY);
-			if (ray.hitDistance == -1) {
-				float underwaterDepth = waterLevel - worldPos.y;
-				float distanceToSurface = clamp(min(underwaterDepth/max(0.001, dot(renderer.sunDir, vec3(0,1,0))), camera.zFar), camera.zNear, camera.zFar);
-				vec3 color = mix(WATER_COLOR, fogColor, clamp(distanceToSurface / MAX_WATER_DEPTH, 0, 1)) * (1-clamp(underwaterDepth / MAX_WATER_DEPTH, 0, 1));
-				originalRay.color.rgb = mix(originalRay.color.rgb, color, fogAmount * 0.5);
-				hitSunlight = true;
-			} else {
-				originalRay.color.rgb = mix(originalRay.color.rgb, vec3(0), fogAmount);
-			}
-		}
-		UNSET_RT_PAYLOAD_FLAG(RT_PAYLOAD_FLAG_FOG_RAY)
-		ray = originalRay;
-	}
-	if (hitSunlight) ray.color.rgb = min(mix(normalize(fogColor), ray.color.rgb, 0.999), mix(ray.color.rgb, fogColor, fogStrength));
+	// if (ray.bounces < RAY_MAX_RECURSION) {
+	// 	const float fogAmount = fogStrength / steps;
+	// 	RayPayload originalRay = ray;
+	// 	++ray.bounces;
+	// 	SET_RT_PAYLOAD_FLAG(RT_PAYLOAD_FLAG_FOG_RAY)
+	// 	for (int i = 0; i < steps; ++i) {
+	// 		float dist = RandomFloat(seed) * originalRay.hitDistance;
+	// 		vec3 worldPos = origin + dir * dist;
+	// 		ray.hitDistance = 0;
+	// 		traceRayEXT(tlas, 0, RENDERABLE_PRIMARY_EXCEPT_WATER, 0/*rayType*/, SBT_HITGROUPS_PER_GEOMETRY/*nbRayTypes*/, 0/*missIndex*/, worldPos, 0, normalize(renderer.sunDir), camera.zFar, RAY_PAYLOAD_PRIMARY);
+	// 		if (ray.hitDistance == -1) {
+	// 			float underwaterDepth = waterLevel - worldPos.y;
+	// 			float distanceToSurface = clamp(min(underwaterDepth/max(0.001, dot(renderer.sunDir, vec3(0,1,0))), camera.zFar), camera.zNear, camera.zFar);
+	// 			vec3 color = mix(WATER_COLOR, fogColor, clamp(distanceToSurface / MAX_WATER_DEPTH, 0, 1)) * (1-clamp(underwaterDepth / MAX_WATER_DEPTH, 0, 1));
+	// 			originalRay.color.rgb = mix(originalRay.color.rgb, color, fogAmount * 0.5);
+	// 			hitSunlight = true;
+	// 		} else {
+	// 			originalRay.color.rgb = mix(originalRay.color.rgb, vec3(0), fogAmount);
+	// 		}
+	// 	}
+	// 	UNSET_RT_PAYLOAD_FLAG(RT_PAYLOAD_FLAG_FOG_RAY)
+	// 	ray = originalRay;
+	// }
+	// if (hitSunlight) 
+		ray.color.rgb = min(mix(normalize(fogColor), ray.color.rgb, 0.999), mix(ray.color.rgb, fogColor, fogStrength));
 }
 
 void main() {

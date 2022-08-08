@@ -1134,8 +1134,8 @@ uvec3 HashGlobalPosition3(uvec3 v) {
 }
 
 uint GetGiIndex(in ivec3 worldPosition) {
-	// uvec3 p = uvec3(worldPosition - renderer.worldOrigin + ivec3(1<<30));
-	uvec3 p = uvec3(worldPosition - renderer.worldOrigin);
+	uvec3 p = uvec3(worldPosition - renderer.worldOrigin + ivec3(1<<30));
+	// uvec3 p = uvec3(worldPosition - renderer.worldOrigin);
 	return HashGlobalPosition(p) % renderer.globalIlluminationTableCount;
 }
 #define GetGi(i) renderer.globalIllumination[i]
@@ -1726,8 +1726,8 @@ STATIC_ASSERT_ALIGNED16_SIZE(ChunkData, 16);
 					float ratio = renderer.testValue; // 0.5
 					if (IsVoxel(chunkID, voxelPosInChunk) && ChunkData(chunkID).voxels.fill[VoxelIndex(voxelPosInChunk.x, voxelPosInChunk.y, voxelPosInChunk.z)] == VOXEL_FULL) {
 						uint giIndexCurrent = GetGiIndex(ivec3(round(ray.nextPosition - ray.normal * 0.5)));
-						int lock = atomicExchange(GetGi(giIndexCurrent).lock, int(giIndexCurrent));
-						if (lock != int(giIndexCurrent)) {
+						int lock = atomicExchange(GetGi(giIndexCurrent).lock, 1);
+						if (lock != 1) {
 							float accumulation = min(GetGi(giIndexCurrent).radiance.a + 1, MAX_ACCUMULATION);
 							if (GetGi(giIndexCurrent).iteration != renderer.giIteration || abs(GetGi(giIndexCurrent).frameIndex - int64_t(camera.frameIndex)) > ACCUMULATOR_MAX_FRAME_INDEX_DIFF) {
 								accumulation = 1;
@@ -1741,8 +1741,8 @@ STATIC_ASSERT_ALIGNED16_SIZE(ChunkData, 16);
 					}
 				}
 				
-				uint lock = atomicExchange(GetGi(giIndex).lock, int(giIndex));
-				if (lock != int(giIndex)) {
+				uint lock = atomicExchange(GetGi(giIndex).lock, 1);
+				if (lock != 1) {
 					float adjacentMixRatio = 0.2;
 					float accumulation = clamp(GetGi(giIndex).radiance.a + 1, 1, MAX_ACCUMULATION);
 					int sampleCount = max(1, int(round(mix(GI_SAMPLES_MAX, GI_SAMPLES_MIN, pow(smoothstep(GI_SAMPLES_FALLOFF_START_DISTANCE, GI_SAMPLES_FALLOFF_END_DISTANCE, dist), 0.5)))));
@@ -1760,7 +1760,7 @@ STATIC_ASSERT_ALIGNED16_SIZE(ChunkData, 16);
 					vec3 color = vec3(0);
 					seed = InitRandomSeed(InitRandomSeed(gl_LaunchIDEXT.x/16, gl_LaunchIDEXT.y/16), uint(camera.frameIndex));
 					for (int i = 0; i < sampleCount; ++i) {
-						vec3 randomBounceDirection = normalize(originalRay.normal * 0.5 + RandomInUnitSphere(seed));
+						vec3 randomBounceDirection = normalize(RandomInUnitSphere(seed));
 						if (i == 0 && accumulation == 1) randomBounceDirection = originalRay.normal;
 						float nDotR = dot(originalRay.normal, randomBounceDirection);
 						if (nDotR < 0) {
@@ -1787,7 +1787,7 @@ STATIC_ASSERT_ALIGNED16_SIZE(ChunkData, 16);
 					
 					ray = originalRay;
 					
-					// if (!isGiRay) {
+					if (!isGiRay) {
 						GetGi(giIndex).frameIndex = int64_t(camera.frameIndex);
 						GetGi(giIndex).iteration = renderer.giIteration;
 						vec3 l = GetGi(giIndex).radiance.rgb;
@@ -1799,8 +1799,8 @@ STATIC_ASSERT_ALIGNED16_SIZE(ChunkData, 16);
 							float dt = dot(vec3(adjacentSides[i]), ray.normal);
 							if (abs(dt) < 0.01) {
 								uint adjacentGiIndex = GetGiIndex(facingWorldPos + adjacentSides[i]);
-								int lock = atomicExchange(GetGi(adjacentGiIndex).lock, int(adjacentGiIndex));
-								if (lock != int(adjacentGiIndex)) {
+								int lock = atomicExchange(GetGi(adjacentGiIndex).lock, 1);
+								if (lock != 1) {
 									float accumulation = min(GetGi(adjacentGiIndex).radiance.a + 1, MAX_ACCUMULATION);
 									if (GetGi(adjacentGiIndex).iteration != renderer.giIteration || abs(GetGi(adjacentGiIndex).frameIndex - int64_t(camera.frameIndex)) > ACCUMULATOR_MAX_FRAME_INDEX_DIFF) {
 										accumulation = 1;
@@ -1816,16 +1816,16 @@ STATIC_ASSERT_ALIGNED16_SIZE(ChunkData, 16);
 							}
 						}
 						
-					// } else {
-					// 	ray.color.rgb += color;
-					// 	GetGi(giIndex).lock = 0;
-					// }
+					} else {
+						ray.color.rgb += color;
+						GetGi(giIndex).lock = 0;
+					}
 				}
 			}
 		}
 		
 		// Apply indirect lighting
-		if (OPTION_INDIRECT_LIGHTING && !isGiRay) {
+		if (OPTION_INDIRECT_LIGHTING) {
 			ivec3 facingVoxelPos = voxelPosInChunk + ivec3(round(ray.normal));
 			vec4 lighting;
 			if (GetGi(giIndex).iteration == renderer.giIteration && abs(GetGi(giIndex).frameIndex - int64_t(camera.frameIndex)) < ACCUMULATOR_MAX_FRAME_INDEX_DIFF && GetGi(giIndex).radiance.a > 1) {

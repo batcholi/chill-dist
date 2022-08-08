@@ -1134,8 +1134,8 @@ uvec3 HashGlobalPosition3(uvec3 v) {
 }
 
 uint GetGiIndex(in ivec3 worldPosition) {
-	// uvec3 p = uvec3(worldPosition - renderer.worldOrigin + ivec3(1<<30));
-	uvec3 p = uvec3(worldPosition - renderer.worldOrigin);
+	uvec3 p = uvec3(worldPosition - renderer.worldOrigin + ivec3(1<<30));
+	// uvec3 p = uvec3(worldPosition - renderer.worldOrigin);
 	return HashGlobalPosition(p) % renderer.globalIlluminationTableCount;
 }
 #define GetGi(i) renderer.globalIllumination[i]
