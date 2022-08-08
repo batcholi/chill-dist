@@ -936,7 +936,7 @@ bool OPTION_INDIRECT_LIGHTING = ((renderer.options & RENDERER_OPTION_INDIRECT_LI
 bool OPTION_DIRECT_LIGHTING = ((renderer.options & RENDERER_OPTION_DIRECT_LIGHTING) != 0);
 bool OPTION_SOFT_SHADOWS = ((renderer.options & RENDERER_OPTION_SOFT_SHADOWS) != 0);
 
-#define RAY_MAX_RECURSION 8
+#define RAY_MAX_RECURSION 5
 
 #define RAY_PAYLOAD_PRIMARY 0
 struct RayPayload {
@@ -1166,7 +1166,7 @@ uint64_t startTime = clockARB();
 #define WATER_LEVEL renderer.waterLevel
 #define MAX_WATER_DEPTH renderer.waterMaxLightDepth
 
-uint seed = InitRandomSeed(InitRandomSeed(gl_LaunchIDEXT.x, gl_LaunchIDEXT.y), uint(camera.frameIndex));
+uint seed = InitRandomSeed(InitRandomSeed(gl_LaunchIDEXT.x/16, gl_LaunchIDEXT.y/16), uint(camera.frameIndex));
 
 #if defined(SHADER_RCHIT) || defined(SHADER_RGEN)
 	layout(set = 1, binding = SET1_BINDING_TLAS) uniform accelerationStructureEXT tlas;
@@ -1775,7 +1775,7 @@ STATIC_ASSERT_ALIGNED16_SIZE(ChunkData, 16);
 						if (ray.hitDistance > 0) {
 							ray.color.rgb *= smoothstep(GI_SAMPLES_FALLOFF_END_DISTANCE, GI_SAMPLES_FALLOFF_START_DISTANCE, ray.hitDistance);
 						}
-						color += ray.color.rgb * nDotR / sampleCount;
+						color += ray.color.rgb * clamp(nDotR,0,1) / sampleCount;
 					}
 					if (!isGiRay) UNSET_RT_PAYLOAD_FLAG(RT_PAYLOAD_FLAG_GI_RAY)
 					
@@ -1827,7 +1827,7 @@ STATIC_ASSERT_ALIGNED16_SIZE(ChunkData, 16);
 		if (OPTION_INDIRECT_LIGHTING && !isGiRay) {
 			ivec3 facingVoxelPos = voxelPosInChunk + ivec3(round(ray.normal));
 			vec4 lighting;
-			if (GetGi(giIndex).iteration == renderer.giIteration && abs(GetGi(giIndex).frameIndex - int64_t(camera.frameIndex)) < ACCUMULATOR_MAX_FRAME_INDEX_DIFF) {
+			if (GetGi(giIndex).iteration == renderer.giIteration && abs(GetGi(giIndex).frameIndex - int64_t(camera.frameIndex)) < ACCUMULATOR_MAX_FRAME_INDEX_DIFF && GetGi(giIndex).radiance.a > 1) {
 				lighting = vec4(GetGi(giIndex).radiance.rgb, 1);
 			} else {
 				lighting = vec4(0);
@@ -1868,12 +1868,16 @@ STATIC_ASSERT_ALIGNED16_SIZE(ChunkData, 16);
 					
 					uint adjacentGiIndex = GetGiIndex(facingWorldPos + adjacentSides[i]);
 					vec3 p = posInVoxel - vec3(adjacentSides[i]);
-					if (GetGi(adjacentGiIndex).iteration == renderer.giIteration && abs(GetGi(adjacentGiIndex).frameIndex - int64_t(camera.frameIndex)) < ACCUMULATOR_MAX_FRAME_INDEX_DIFF) {
+					if (GetGi(adjacentGiIndex).iteration == renderer.giIteration && abs(GetGi(adjacentGiIndex).frameIndex - int64_t(camera.frameIndex)) < ACCUMULATOR_MAX_FRAME_INDEX_DIFF && GetGi(adjacentGiIndex).radiance.a > 1) {
 						lighting += vec4(GetGi(adjacentGiIndex).radiance.rgb * (1 - clamp(sdfSphere(p, 0.667), 0, 1)), 1);
 					}
 				}
 			}
-			return albedo * lighting.rgb / max(1, lighting.a);
+			// if (lighting.a > 0) {
+				return albedo * lighting.rgb / max(1, lighting.a);
+			// } else {
+			// 	return albedo * GetSkyColor(ray.normal) * 0.1;
+			// }
 		}
 		return vec3(0);
 	}
@@ -1885,7 +1889,7 @@ STATIC_ASSERT_ALIGNED16_SIZE(ChunkData, 16);
 hitAttributeEXT VOXEL_INDEX_TYPE voxelIndex; // Because of a bug in AMD drivers, we CANNOT rely on hitAttributeEXT
 
 
-#line 375 "/home/olivier/projects/chill/src/v4d/modules/CHILL_terrain/assets/shaders/voxel.glsl"
+#line 379 "/home/olivier/projects/chill/src/v4d/modules/CHILL_terrain/assets/shaders/voxel.glsl"
 
 void main() {
 	CLOSEST_HIT_BEGIN

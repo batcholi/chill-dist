@@ -936,7 +936,7 @@ bool OPTION_INDIRECT_LIGHTING = ((renderer.options & RENDERER_OPTION_INDIRECT_LI
 bool OPTION_DIRECT_LIGHTING = ((renderer.options & RENDERER_OPTION_DIRECT_LIGHTING) != 0);
 bool OPTION_SOFT_SHADOWS = ((renderer.options & RENDERER_OPTION_SOFT_SHADOWS) != 0);
 
-#define RAY_MAX_RECURSION 8
+#define RAY_MAX_RECURSION 5
 
 #define RAY_PAYLOAD_PRIMARY 0
 struct RayPayload {
@@ -1166,7 +1166,7 @@ uint64_t startTime = clockARB();
 #define WATER_LEVEL renderer.waterLevel
 #define MAX_WATER_DEPTH renderer.waterMaxLightDepth
 
-uint seed = InitRandomSeed(InitRandomSeed(gl_LaunchIDEXT.x, gl_LaunchIDEXT.y), uint(camera.frameIndex));
+uint seed = InitRandomSeed(InitRandomSeed(gl_LaunchIDEXT.x/16, gl_LaunchIDEXT.y/16), uint(camera.frameIndex));
 
 #if defined(SHADER_RCHIT) || defined(SHADER_RGEN)
 	layout(set = 1, binding = SET1_BINDING_TLAS) uniform accelerationStructureEXT tlas;
@@ -1328,7 +1328,7 @@ void ApplyUnderwaterFog() {
 
 	ray.color.rgb = mix(ray.color.rgb, vec3(0), pow(clamp(ray.hitDistance / MAX_WATER_DEPTH, 0, 1), 0.5));
 	
-	uint steps = max(inverse(camera.viewMatrix)[3].y - renderer.worldOrigin.y > WATER_LEVEL ? 1 : 16, renderer.fogSteps);
+	uint steps = max(inverse(camera.viewMatrix)[3].y - renderer.worldOrigin.y > WATER_LEVEL ? 1 : 8, renderer.fogSteps);
 	
 	bool hitSunlight = false;
 	
