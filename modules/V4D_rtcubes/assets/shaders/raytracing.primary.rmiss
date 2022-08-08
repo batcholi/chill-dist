@@ -1134,7 +1134,8 @@ uvec3 HashGlobalPosition3(uvec3 v) {
 }
 
 uint GetGiIndex(in ivec3 worldPosition) {
-	uvec3 p = uvec3(worldPosition + renderer.worldOrigin + ivec3(1<<30));
+	// uvec3 p = uvec3(worldPosition - renderer.worldOrigin + ivec3(1<<30));
+	uvec3 p = uvec3(worldPosition - renderer.worldOrigin);
 	return HashGlobalPosition(p) % renderer.globalIlluminationTableCount;
 }
 #define GetGi(i) renderer.globalIllumination[i]
@@ -1255,7 +1256,7 @@ uint seed = InitRandomSeed(InitRandomSeed(gl_LaunchIDEXT.x, gl_LaunchIDEXT.y), u
 					RayPayload originalRay = ray;
 					if (!isAlreadyShadowRay) SET_RT_PAYLOAD_FLAG(RT_PAYLOAD_FLAG_SHADOW_RAY)
 					++ray.bounces;
-					for (;;) {
+					for (int i = 0; i < 3; ++i) {
 						if (dot(directLighting,directLighting) < 0.00001) {
 							directLighting = vec3(0);
 							break;
@@ -1267,7 +1268,7 @@ uint seed = InitRandomSeed(InitRandomSeed(gl_LaunchIDEXT.x, gl_LaunchIDEXT.y), u
 							vec3 specular = sunColor * pow(clamp(dot(originalRay.normal, normalize(shadowRayDir - gl_WorldRayDirectionEXT)), 0, 1), specularPower) * specularMultiplier;
 							directLighting *= diffuse + specular;
 							break;
-						} else if (ray.color.a < 1.0) {
+						} else if (ray.color.a < 0.99) {
 							// Diffuse (within transparent non-air medium, like water or glass)
 							directLighting *= 1-ray.color.a;
 							surfacePosition = ray.nextPosition + shadowRayDir * 0.001;
@@ -1287,8 +1288,9 @@ uint seed = InitRandomSeed(InitRandomSeed(gl_LaunchIDEXT.x, gl_LaunchIDEXT.y), u
 		}
 		
 		if (isUnderWater) {
-			float falloff = pow(1-clamp((WATER_LEVEL - ray.nextPosition.y) / MAX_WATER_DEPTH, 0, 1), 4);
-			float caustics = max(0.5, pow(1-abs(Simplex(ray.nextPosition * vec3(2,1,4) + vec3(float(renderer.timestamp*0.7)))), 1.1*falloff));
+			vec3 globalPosition = ray.nextPosition - renderer.worldOrigin;
+			float falloff = pow(1-clamp((WATER_LEVEL - globalPosition.y) / MAX_WATER_DEPTH, 0, 1), 4);
+			float caustics = pow(1-clamp(abs(Simplex(ray.nextPosition * vec3(2,1,4) + vec3(float(renderer.timestamp*0.7)))),0,1), 2*falloff * clamp(Simplex(ray.nextPosition)*0.5+0.5, 0, 1));
 			return ambient + directLighting * falloff * caustics;
 		} else {
 			return ambient + directLighting;
@@ -1305,7 +1307,7 @@ uint seed = InitRandomSeed(InitRandomSeed(gl_LaunchIDEXT.x, gl_LaunchIDEXT.y), u
 #line 2 "/home/olivier/projects/chill/src/v4d/modules/V4D_rtcubes/assets/shaders/raytracing.glsl"
 
 
-#line 267 "/home/olivier/projects/chill/src/v4d/modules/V4D_rtcubes/assets/shaders/raytracing.glsl"
+#line 262 "/home/olivier/projects/chill/src/v4d/modules/V4D_rtcubes/assets/shaders/raytracing.glsl"
 void main() {
 	uint flags = RT_PAYLOAD_FLAGS;
 	ray.hitDistance = -1;

@@ -1134,7 +1134,8 @@ uvec3 HashGlobalPosition3(uvec3 v) {
 }
 
 uint GetGiIndex(in ivec3 worldPosition) {
-	uvec3 p = uvec3(worldPosition + renderer.worldOrigin + ivec3(1<<30));
+	// uvec3 p = uvec3(worldPosition - renderer.worldOrigin + ivec3(1<<30));
+	uvec3 p = uvec3(worldPosition - renderer.worldOrigin);
 	return HashGlobalPosition(p) % renderer.globalIlluminationTableCount;
 }
 #define GetGi(i) renderer.globalIllumination[i]
@@ -1255,7 +1256,7 @@ uint seed = InitRandomSeed(InitRandomSeed(gl_LaunchIDEXT.x, gl_LaunchIDEXT.y), u
 					RayPayload originalRay = ray;
 					if (!isAlreadyShadowRay) SET_RT_PAYLOAD_FLAG(RT_PAYLOAD_FLAG_SHADOW_RAY)
 					++ray.bounces;
-					for (;;) {
+					for (int i = 0; i < 3; ++i) {
 						if (dot(directLighting,directLighting) < 0.00001) {
 							directLighting = vec3(0);
 							break;
@@ -1267,7 +1268,7 @@ uint seed = InitRandomSeed(InitRandomSeed(gl_LaunchIDEXT.x, gl_LaunchIDEXT.y), u
 							vec3 specular = sunColor * pow(clamp(dot(originalRay.normal, normalize(shadowRayDir - gl_WorldRayDirectionEXT)), 0, 1), specularPower) * specularMultiplier;
 							directLighting *= diffuse + specular;
 							break;
-						} else if (ray.color.a < 1.0) {
+						} else if (ray.color.a < 0.99) {
 							// Diffuse (within transparent non-air medium, like water or glass)
 							directLighting *= 1-ray.color.a;
 							surfacePosition = ray.nextPosition + shadowRayDir * 0.001;
@@ -1287,8 +1288,9 @@ uint seed = InitRandomSeed(InitRandomSeed(gl_LaunchIDEXT.x, gl_LaunchIDEXT.y), u
 		}
 		
 		if (isUnderWater) {
-			float falloff = pow(1-clamp((WATER_LEVEL - ray.nextPosition.y) / MAX_WATER_DEPTH, 0, 1), 4);
-			float caustics = max(0.5, pow(1-abs(Simplex(ray.nextPosition * vec3(2,1,4) + vec3(float(renderer.timestamp*0.7)))), 1.1*falloff));
+			vec3 globalPosition = ray.nextPosition - renderer.worldOrigin;
+			float falloff = pow(1-clamp((WATER_LEVEL - globalPosition.y) / MAX_WATER_DEPTH, 0, 1), 4);
+			float caustics = pow(1-clamp(abs(Simplex(ray.nextPosition * vec3(2,1,4) + vec3(float(renderer.timestamp*0.7)))),0,1), 2*falloff * clamp(Simplex(ray.nextPosition)*0.5+0.5, 0, 1));
 			return ambient + directLighting * falloff * caustics;
 		} else {
 			return ambient + directLighting;
@@ -1716,7 +1718,7 @@ STATIC_ASSERT_ALIGNED16_SIZE(ChunkData, 16);
 			
 			float dist = length((camera.viewMatrix * vec4(facingWorldPos, 1)).xyz);
 			
-			int maxBounces = min(RAY_MAX_RECURSION, (dist > GI_2_BOUNCES_MAX_DISTANCE? 1 : (isUnderWater?3:2)));
+			int maxBounces = min(RAY_MAX_RECURSION, (isUnderWater?3:2));
 			
 			if (ray.bounces < maxBounces) {
 				
@@ -1724,8 +1726,8 @@ STATIC_ASSERT_ALIGNED16_SIZE(ChunkData, 16);
 					float ratio = renderer.testValue; // 0.5
 					if (IsVoxel(chunkID, voxelPosInChunk) && ChunkData(chunkID).voxels.fill[VoxelIndex(voxelPosInChunk.x, voxelPosInChunk.y, voxelPosInChunk.z)] == VOXEL_FULL) {
 						uint giIndexCurrent = GetGiIndex(ivec3(round(ray.nextPosition - ray.normal * 0.5)));
-						int lock = atomicExchange(GetGi(giIndexCurrent).lock, 1);
-						if (lock == 0) {
+						int lock = atomicExchange(GetGi(giIndexCurrent).lock, int(giIndexCurrent));
+						if (lock != int(giIndexCurrent)) {
 							float accumulation = min(GetGi(giIndexCurrent).radiance.a + 1, MAX_ACCUMULATION);
 							if (GetGi(giIndexCurrent).iteration != renderer.giIteration || abs(GetGi(giIndexCurrent).frameIndex - int64_t(camera.frameIndex)) > ACCUMULATOR_MAX_FRAME_INDEX_DIFF) {
 								accumulation = 1;
@@ -1739,8 +1741,8 @@ STATIC_ASSERT_ALIGNED16_SIZE(ChunkData, 16);
 					}
 				}
 				
-				uint lock = atomicExchange(GetGi(giIndex).lock, 1);
-				if (lock == 0) {
+				uint lock = atomicExchange(GetGi(giIndex).lock, int(giIndex));
+				if (lock != int(giIndex)) {
 					float adjacentMixRatio = 0.2;
 					float accumulation = clamp(GetGi(giIndex).radiance.a + 1, 1, MAX_ACCUMULATION);
 					int sampleCount = max(1, int(round(mix(GI_SAMPLES_MAX, GI_SAMPLES_MIN, pow(smoothstep(GI_SAMPLES_FALLOFF_START_DISTANCE, GI_SAMPLES_FALLOFF_END_DISTANCE, dist), 0.5)))));
@@ -1765,7 +1767,7 @@ STATIC_ASSERT_ALIGNED16_SIZE(ChunkData, 16);
 							nDotR *= -1;
 						}
 						ray.hitDistance = 0;
-						traceRayEXT(tlas, 0, RENDERABLE_PRIMARY_EXCEPT_WATER, 0/*rayType*/, SBT_HITGROUPS_PER_GEOMETRY/*nbRayTypes*/, 0/*missIndex*/, originalRay.nextPosition, GI_MIN_DISTANCE, randomBounceDirection, GI_MAX_DISTANCE, RAY_PAYLOAD_PRIMARY);
+						traceRayEXT(tlas, 0, RENDERABLE_PRIMARY_EXCEPT_WATER, 0/*rayType*/, SBT_HITGROUPS_PER_GEOMETRY/*nbRayTypes*/, 0/*missIndex*/, facingWorldPos, GI_MIN_DISTANCE, randomBounceDirection, GI_MAX_DISTANCE, RAY_PAYLOAD_PRIMARY);
 						if (ray.hitDistance == -1 && isUnderWater) {
 							float falloff = pow(1-clamp((WATER_LEVEL - ray.nextPosition.y) / MAX_WATER_DEPTH, 0, 1), 4);
 							ray.color.rgb *= falloff;
@@ -1784,7 +1786,7 @@ STATIC_ASSERT_ALIGNED16_SIZE(ChunkData, 16);
 					
 					ray = originalRay;
 					
-					if (!isGiRay) {
+					// if (!isGiRay) {
 						GetGi(giIndex).frameIndex = int64_t(camera.frameIndex);
 						GetGi(giIndex).iteration = renderer.giIteration;
 						vec3 l = GetGi(giIndex).radiance.rgb;
@@ -1793,10 +1795,11 @@ STATIC_ASSERT_ALIGNED16_SIZE(ChunkData, 16);
 						GetGi(giIndex).lock = 0;
 					
 						for (int i = 0; i < nbAdjacentSides; ++i) {
-							if (abs(dot(vec3(adjacentSides[i]), ray.normal)) < 0.2) {
+							float dt = dot(vec3(adjacentSides[i]), ray.normal);
+							if (abs(dt) < 0.01) {
 								uint adjacentGiIndex = GetGiIndex(facingWorldPos + adjacentSides[i]);
-								int lock = atomicExchange(GetGi(adjacentGiIndex).lock, 1);
-								if (lock == 0) {
+								int lock = atomicExchange(GetGi(adjacentGiIndex).lock, int(adjacentGiIndex));
+								if (lock != int(adjacentGiIndex)) {
 									float accumulation = min(GetGi(adjacentGiIndex).radiance.a + 1, MAX_ACCUMULATION);
 									if (GetGi(adjacentGiIndex).iteration != renderer.giIteration || abs(GetGi(adjacentGiIndex).frameIndex - int64_t(camera.frameIndex)) > ACCUMULATOR_MAX_FRAME_INDEX_DIFF) {
 										accumulation = 1;
@@ -1812,10 +1815,10 @@ STATIC_ASSERT_ALIGNED16_SIZE(ChunkData, 16);
 							}
 						}
 						
-					} else {
-						ray.color.rgb += color;
-						GetGi(giIndex).lock = 0;
-					}
+					// } else {
+					// 	ray.color.rgb += color;
+					// 	GetGi(giIndex).lock = 0;
+					// }
 				}
 			}
 		}
@@ -1830,7 +1833,7 @@ STATIC_ASSERT_ALIGNED16_SIZE(ChunkData, 16);
 				lighting = vec4(0);
 			}
 			for (int i = 0; i < nbAdjacentSides; ++i) {
-				if (dot(vec3(adjacentSides[i]), ray.normal) == 0) {
+				if (abs(dot(vec3(adjacentSides[i]), ray.normal)) < 0.01) {
 					
 					if (!isUnderWater) {
 						if (abs(adjacentSides[i].x) + abs(adjacentSides[i].y) + abs(adjacentSides[i].z) == 2) {
@@ -1882,7 +1885,7 @@ STATIC_ASSERT_ALIGNED16_SIZE(ChunkData, 16);
 hitAttributeEXT VOXEL_INDEX_TYPE voxelIndex; // Because of a bug in AMD drivers, we CANNOT rely on hitAttributeEXT
 
 
-#line 227 "/home/olivier/projects/chill/src/v4d/modules/CHILL_terrain/assets/shaders/voxel.glsl"
+#line 228 "/home/olivier/projects/chill/src/v4d/modules/CHILL_terrain/assets/shaders/voxel.glsl"
 
 bool IsValidVoxel(in ivec3 iPos, in vec3 gridOffset) {
 	if (iPos.x < 0 || iPos.y < 0 || iPos.z < 0) return false;
