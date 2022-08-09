@@ -1674,7 +1674,7 @@ STATIC_ASSERT_ALIGNED16_SIZE(ChunkData, 16);
 	#define GI_MIN_DISTANCE 0.1 // camera.zNear
 	#define GI_MAX_DISTANCE camera.zFar
 	#define MAX_ACCUMULATION 500
-	#define ACCUMULATOR_MAX_FRAME_INDEX_DIFF 500
+	#define ACCUMULATOR_MAX_FRAME_INDEX_DIFF 5
 
 	vec3 GetAmbientVoxelLighting(in vec3 albedo, in ivec3 voxelPosInChunk, in vec3 posInVoxel) {
 		uint flags = RT_PAYLOAD_FLAGS;
@@ -1750,7 +1750,7 @@ STATIC_ASSERT_ALIGNED16_SIZE(ChunkData, 16);
 					if (GetGi(giIndex).iteration != renderer.giIteration || abs(GetGi(giIndex).frameIndex - int64_t(camera.frameIndex)) > ACCUMULATOR_MAX_FRAME_INDEX_DIFF) {
 						accumulation = 1;
 						adjacentMixRatio = 1;
-						sampleCount *= 4;
+						sampleCount = 16;
 					}
 					
 					RayPayload originalRay = ray;
@@ -1760,12 +1760,12 @@ STATIC_ASSERT_ALIGNED16_SIZE(ChunkData, 16);
 					vec3 color = vec3(0);
 					seed = InitRandomSeed(InitRandomSeed(gl_LaunchIDEXT.x/16, gl_LaunchIDEXT.y/16), uint(camera.frameIndex));
 					for (int i = 0; i < sampleCount; ++i) {
-						vec3 randomBounceDirection = normalize(RandomInUnitSphere(seed));
-						if (i == 0 && accumulation == 1) randomBounceDirection = originalRay.normal;
+						vec3 randomBounceDirection = normalize(originalRay.normal * 0.5 + RandomInUnitSphere(seed));
+						// if (i == 0 && accumulation == 1) randomBounceDirection = originalRay.normal;
 						float nDotR = dot(originalRay.normal, randomBounceDirection);
 						if (nDotR < 0) {
 							randomBounceDirection *= -1;
-							nDotR *= -1;
+							// nDotR *= -1;
 						}
 						ray.hitDistance = 0;
 						traceRayEXT(tlas, 0, RENDERABLE_PRIMARY_EXCEPT_WATER, 0/*rayType*/, SBT_HITGROUPS_PER_GEOMETRY/*nbRayTypes*/, 0/*missIndex*/, facingWorldPos, GI_MIN_DISTANCE, randomBounceDirection, GI_MAX_DISTANCE, RAY_PAYLOAD_PRIMARY);
@@ -1792,7 +1792,7 @@ STATIC_ASSERT_ALIGNED16_SIZE(ChunkData, 16);
 						GetGi(giIndex).iteration = renderer.giIteration;
 						vec3 l = GetGi(giIndex).radiance.rgb;
 						l = mix(l, color, clamp(1/accumulation, 0, 1));
-						GetGi(giIndex).radiance = vec4(l, accumulation);
+						GetGi(giIndex).radiance = vec4(l, accumulation + sampleCount - 1);
 						GetGi(giIndex).lock = 0;
 					
 						for (int i = 0; i < nbAdjacentSides; ++i) {
