@@ -1674,7 +1674,7 @@ STATIC_ASSERT_ALIGNED16_SIZE(ChunkData, 16);
 	#define GI_MIN_DISTANCE 0.1 // camera.zNear
 	#define GI_MAX_DISTANCE camera.zFar
 	#define MAX_ACCUMULATION 500
-	#define ACCUMULATOR_MAX_FRAME_INDEX_DIFF 5
+	#define ACCUMULATOR_MAX_FRAME_INDEX_DIFF 500
 
 	vec3 GetAmbientVoxelLighting(in vec3 albedo, in ivec3 voxelPosInChunk, in vec3 posInVoxel) {
 		uint flags = RT_PAYLOAD_FLAGS;
