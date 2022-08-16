@@ -3,6 +3,7 @@
 #extension GL_GOOGLE_cpp_style_line_directive : enable
 
 #define _DEBUG
+#define GLSL 1
 #define SHADER_RCHIT
 #define SHADER_SUBPASS_0
 #define SHADER_OFFSET_0
@@ -208,8 +209,10 @@
 
 // up to 32 render options
 #define RENDER_OPTION_TAA (1u<< 0)
-#define RENDER_OPTION_TEMPORAL_UPSCALING (1u<< 1)
-#define RENDER_OPTION_TONE_MAPPING (1u<< 2)
+#define RENDER_OPTION_SSAO (1u<< 1)
+#define RENDER_OPTION_TEMPORAL_UPSCALING (1u<< 2)
+#define RENDER_OPTION_TONE_MAPPING (1u<< 3)
+#define RENDER_OPTION_ACCUMULATE (1u<< 4)
 
 // Debug view modes
 #define RENDER_DEBUG_VIEWMODE_NONE 0
@@ -221,18 +224,16 @@
 
 #define NB_RENDERABLE_TYPES 8 // this will NOT change, it is a limitation of VK_KHR_ray_tracing
 // Renderable types
-#define RENDERABLE_TYPE_GENERIC 0 // Standard geometries
-#define RENDERABLE_TYPE_SELF 1 // Typically refers to the current player's avatar when in first person view, invisible for primary rays but visible for reflections and shadow rays
-#define RENDERABLE_TYPE_TERRAIN 2 // Large scale static geometries, typically Terrain
-#define RENDERABLE_TYPE_WATER 3 // Transparent geometries that can include other geometries within it, affecting the visual environment, typically Water
+#define RENDERABLE_TYPE_VOXEL 0 // Standard voxel geometries, typically terrain, structures and vehicles
+#define RENDERABLE_TYPE_MOB 1 // Mobile entities that are very dynamic, does not affect GI, typically players avatars and NPCs
+#define RENDERABLE_TYPE_WATER 2 // Transparent geometries that can include other geometries within it, affecting the visual environment, typically Water
+#define RENDERABLE_TYPE_CLOUD 3 // Volumetric non-solid geometries that is often ray-marched into, typically Clouds, Smoke and Atmosphere
 #define RENDERABLE_TYPE_CLUTTER 4 // Small geometries usually present in very large quantities, typically Rocks and Grass
-#define RENDERABLE_TYPE_CLOUD 5 // Volumetric non-solid geometries that is often ray-marched into, typically Clouds, Smoke and Atmosphere
-#define RENDERABLE_TYPE_LIGHT_RADIUS 6 // Special geometry that denotes a light's radius, to be point-traced for finding relevant light sources that may be shining on surfaces for direct lighting
-#define RENDERABLE_TYPE_OVERLAY 7 // Geometry that is ONLY visible from primary rays and that do not cast shadows, typically holograms and debug stuff
+#define RENDERABLE_TYPE_LIGHT_RADIUS 5 // Special geometry that denotes a light's radius, to be point-traced for finding relevant light sources that may be shining on surfaces for direct lighting
+#define RENDERABLE_TYPE_OVERLAY 6 // Geometry that is ONLY visible from primary rays and that do not cast shadows, typically holograms and debug stuff
 
-#define RENDERABLE_MASK_GENERIC (1u<< RENDERABLE_TYPE_GENERIC)
-#define RENDERABLE_MASK_SELF (1u<< RENDERABLE_TYPE_SELF)
-#define RENDERABLE_MASK_TERRAIN (1u<< RENDERABLE_TYPE_TERRAIN)
+#define RENDERABLE_MASK_VOXEL (1u<< RENDERABLE_TYPE_VOXEL)
+#define RENDERABLE_MASK_MOB (1u<< RENDERABLE_TYPE_MOB)
 #define RENDERABLE_MASK_WATER (1u<< RENDERABLE_TYPE_WATER)
 #define RENDERABLE_MASK_CLUTTER (1u<< RENDERABLE_TYPE_CLUTTER)
 #define RENDERABLE_MASK_CLOUD (1u<< RENDERABLE_TYPE_CLOUD)
@@ -240,9 +241,7 @@
 #define RENDERABLE_MASK_OVERLAY (1u<< RENDERABLE_TYPE_OVERLAY)
 
 #define RENDERABLE_STANDARD (0xff & ~RENDERABLE_MASK_LIGHT_RADIUS)
-#define RENDERABLE_PRIMARY (RENDERABLE_STANDARD & ~RENDERABLE_MASK_SELF)
 #define RENDERABLE_STANDARD_EXCEPT_WATER (RENDERABLE_STANDARD & ~RENDERABLE_MASK_WATER)
-#define RENDERABLE_PRIMARY_EXCEPT_WATER (RENDERABLE_PRIMARY & ~RENDERABLE_MASK_WATER)
 
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////
 // Structs and Buffer References -- Must use aligned_* explicit arithmetic types (or VkDeviceAddress as an uint64_t, or BUFFER_REFERENCE_ADDR(StructType))
@@ -269,7 +268,7 @@ struct CameraData {
 	aligned_float32_t gamma;
 	aligned_float32_t renderScale;
 	aligned_uint32_t options;
-	aligned_uint32_t _unused;
+	aligned_float32_t debugViewScale;
 	aligned_uint32_t debugViewMode;
 	aligned_uint64_t frameIndex;
 	aligned_float64_t deltaTime;
@@ -295,29 +294,9 @@ BUFFER_REFERENCE_STRUCT_READONLY(16) AabbData {
 };
 STATIC_ASSERT_ALIGNED16_SIZE(AabbData, 32)
 
-BUFFER_REFERENCE_STRUCT_READONLY(16) GeometryData {
-	aligned_uint8_t sbtHandle[32];
-	BUFFER_REFERENCE_ADDR(AabbData) aabbs;
-	aligned_VkDeviceAddress vertices;
-	aligned_VkDeviceAddress indices32;
-	aligned_VkDeviceAddress indices16;
-};
-STATIC_ASSERT_ALIGNED16_SIZE(GeometryData, 64)
-
-BUFFER_REFERENCE_STRUCT_READONLY(16) RenderableInstanceData {
-	BUFFER_REFERENCE_ADDR(GeometryData) geometries;
-	aligned_uint64_t _unused;
-};
-STATIC_ASSERT_ALIGNED16_SIZE(RenderableInstanceData, 16)
-
 BUFFER_REFERENCE_STRUCT(16) AimBuffer {
 	aligned_f32vec3 localPosition;
-	#ifdef __cplusplus
-		uint32_t geometryIndex : 12;
-		uint32_t aimID : 20 = 0;
-	#else
-		uint32_t aimGeometryID;
-	#endif
+	aligned_uint32_t aimID;
 	aligned_f32vec3 worldSpaceHitNormal;
 	aligned_uint32_t aabbIndex;
 	aligned_f32vec3 worldSpacePosition; // MUST COMPENSATE FOR ORIGIN RESET
@@ -325,8 +304,10 @@ BUFFER_REFERENCE_STRUCT(16) AimBuffer {
 	aligned_f32vec4 color;
 	aligned_f32vec3 viewSpaceHitNormal;
 	aligned_uint32_t tlasInstanceIndex;
+	aligned_f32vec3 _unused;
+	aligned_uint32_t geometryIndex;
 };
-STATIC_ASSERT_ALIGNED16_SIZE(AimBuffer, 80)
+STATIC_ASSERT_ALIGNED16_SIZE(AimBuffer, 96)
 
 #ifdef __cplusplus
 	}
@@ -351,6 +332,9 @@ layout(set = 0, binding = SET0_BINDING_IMG_DEBUG, rgba32f) uniform image2D img_d
 layout(set = 0, binding = SET0_BINDING_TEXTURES) uniform sampler2D textures[];
 
 CameraData camera = cameras[0];
+
+#define WORLD2VIEWNORMAL transpose(inverse(mat3(camera.viewMatrix)))
+#define VIEW2WORLDNORMAL transpose(mat3(camera.viewMatrix))
 
 #ifdef SHADER_VERT
 	#define IMPORT_DEFAULT_FULLSCREEN_VERTEX_SHADER \
@@ -808,6 +792,21 @@ BUFFER_REFERENCE_STRUCT(16) GlobalIllumination {
 };
 STATIC_ASSERT_ALIGNED16_SIZE(GlobalIllumination, 32);
 
+BUFFER_REFERENCE_STRUCT_READONLY(16) GeometryData {
+	aligned_uint8_t sbtHandle[32];
+	BUFFER_REFERENCE_ADDR(AabbData) aabbs;
+	aligned_VkDeviceAddress vertices;
+	aligned_VkDeviceAddress indices32;
+	aligned_VkDeviceAddress indices16;
+};
+STATIC_ASSERT_ALIGNED16_SIZE(GeometryData, 64)
+
+BUFFER_REFERENCE_STRUCT_READONLY(16) RenderableInstanceData {
+	BUFFER_REFERENCE_ADDR(GeometryData) geometries;
+	aligned_uint64_t _unused;
+};
+STATIC_ASSERT_ALIGNED16_SIZE(RenderableInstanceData, 16)
+
 struct RendererData {
 	BUFFER_REFERENCE_ADDR(RenderableInstanceData) renderableInstances;
 	BUFFER_REFERENCE_ADDR(TLASInstance) tlasInstances;
@@ -975,9 +974,6 @@ struct RayPayload {
 	#define BOX_INTERSECTION_KIND_OUTSIDE_FACE 0
 	#define BOX_INTERSECTION_KIND_INSIDE_FACE 1
 #endif
-
-#define WORLD2VIEWNORMAL transpose(inverse(mat3(camera.viewMatrix)))
-#define VIEW2WORLDNORMAL transpose(mat3(camera.viewMatrix))
 
 #if defined(SHADER_RINT) || defined(SHADER_RCHIT)
 	// Intersects ray with a BOX, generating T1 and T2 values
@@ -1195,7 +1191,7 @@ uint seed = InitRandomSeed(InitRandomSeed(gl_LaunchIDEXT.x, gl_LaunchIDEXT.y), u
 					float dist = RandomFloat(seed) * dist;
 					vec3 worldPos = origin + dir * dist;
 					ray.hitDistance = 0;
-					traceRayEXT(tlas, 0, RENDERABLE_PRIMARY, 0/*rayType*/, SBT_HITGROUPS_PER_GEOMETRY/*nbRayTypes*/, 0/*missIndex*/, worldPos, 0, normalize(renderer.sunDir), camera.zFar, RAY_PAYLOAD_PRIMARY);
+					traceRayEXT(tlas, 0, RENDERABLE_STANDARD, 0/*rayType*/, SBT_HITGROUPS_PER_GEOMETRY/*nbRayTypes*/, 0/*missIndex*/, worldPos, 0, normalize(renderer.sunDir), camera.zFar, RAY_PAYLOAD_PRIMARY);
 					if (ray.hitDistance == -1) {
 						originalRay.color.rgb = mix(originalRay.color.rgb, fogColor, fogAmount);
 					} else {

@@ -1,0 +1,9 @@
+0 raytracing.rgen
+0 raytracing.rmiss
+0 raytracing.void.rcall
+0 raytracing.voxel.rint
+0 raytracing.voxel.rchit
+1 raytracing.mob.rint
+1 raytracing.mob.rchit
+2 raytracing.water.rint
+2 raytracing.water.rchit
