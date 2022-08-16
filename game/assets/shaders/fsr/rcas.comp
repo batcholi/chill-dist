@@ -224,6 +224,7 @@
 #define RENDERABLE_TYPE_CLUTTER 4 // Small geometries usually present in very large quantities, typically Rocks and Grass
 #define RENDERABLE_TYPE_LIGHT_RADIUS 5 // Special geometry that denotes a light's radius, to be point-traced for finding relevant light sources that may be shining on surfaces for direct lighting
 #define RENDERABLE_TYPE_OVERLAY 6 // Geometry that is ONLY visible from primary rays and that do not cast shadows, typically holograms and debug stuff
+// #define RENDERABLE_TYPE_OTHER 7 // 
 
 #define RENDERABLE_MASK_VOXEL (1u<< RENDERABLE_TYPE_VOXEL)
 #define RENDERABLE_MASK_MOB (1u<< RENDERABLE_TYPE_MOB)

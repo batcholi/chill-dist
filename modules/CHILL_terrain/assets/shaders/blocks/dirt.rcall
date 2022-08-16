@@ -229,6 +229,7 @@
 #define RENDERABLE_TYPE_CLUTTER 4 // Small geometries usually present in very large quantities, typically Rocks and Grass
 #define RENDERABLE_TYPE_LIGHT_RADIUS 5 // Special geometry that denotes a light's radius, to be point-traced for finding relevant light sources that may be shining on surfaces for direct lighting
 #define RENDERABLE_TYPE_OVERLAY 6 // Geometry that is ONLY visible from primary rays and that do not cast shadows, typically holograms and debug stuff
+// #define RENDERABLE_TYPE_OTHER 7 // 
 
 #define RENDERABLE_MASK_VOXEL (1u<< RENDERABLE_TYPE_VOXEL)
 #define RENDERABLE_MASK_MOB (1u<< RENDERABLE_TYPE_MOB)
@@ -639,8 +640,10 @@ struct RendererData {
 	aligned_float32_t wireframeThickness;
 	aligned_i32vec3 worldOrigin;
 	aligned_uint32_t globalIlluminationTableCount;
+	aligned_float64_t timestamp;
+	aligned_float64_t _unused_3;
 };
-STATIC_ASSERT_ALIGNED16_SIZE(RendererData, 96);
+STATIC_ASSERT_ALIGNED16_SIZE(RendererData, 112);
 #line 3 "/home/olivier/projects/chill/src/v4d/modules/CHILL_terrain/assets/shaders/blocks/dirt.glsl"
 #line 1 "/home/olivier/projects/chill/src/v4d/modules/CHILL_terrain/assets/shaders/blocks/../voxel.hh"
 #line 2 "/home/olivier/projects/chill/src/v4d/modules/CHILL_terrain/assets/shaders/blocks/../voxel.hh"

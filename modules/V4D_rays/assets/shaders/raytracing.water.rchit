@@ -1121,14 +1121,14 @@ const float EPSILON = 0.00001;
 #define traceRayEXT {if (camera.debugViewMode == RENDERER_DEBUG_MODE_TRACE_RAY_COUNT) imageStore(img_debug, COORDS, imageLoad(img_debug, COORDS) + uvec4(0,0,0,1));} traceRayEXT
 #define DEBUG_TEST(color) {if (camera.debugViewMode == RENDERER_DEBUG_MODE_TEST) imageStore(img_debug, COORDS, color);}
 #define RAY_RECURSIONS imageLoad(rtPayloadImage, COORDS).r
-#define RAY_RECURSE imageStore(rtPayloadImage, COORDS, imageLoad(rtPayloadImage, COORDS) + uvec4(1,0,0,0));
-#define RAY_RECURSE_POP imageStore(rtPayloadImage, COORDS, imageLoad(rtPayloadImage, COORDS) - uvec4(1,0,0,0));
+#define RAY_RECURSE imageStore(rtPayloadImage, COORDS, imageLoad(rtPayloadImage, COORDS) + u8vec4(1,0,0,0));
+#define RAY_RECURSE_POP imageStore(rtPayloadImage, COORDS, imageLoad(rtPayloadImage, COORDS) - u8vec4(1,0,0,0));
 #define RAY_IS_SHADOW (imageLoad(rtPayloadImage, COORDS).g > 0)
-#define RAY_SET_SHADOW imageStore(rtPayloadImage, COORDS, imageLoad(rtPayloadImage, COORDS) + uvec4(0,1,0,0));
-#define RAY_UNSET_SHADOW imageStore(rtPayloadImage, COORDS, imageLoad(rtPayloadImage, COORDS) * uvec4(1,0,1,1));
+#define RAY_SET_SHADOW imageStore(rtPayloadImage, COORDS, imageLoad(rtPayloadImage, COORDS) + u8vec4(0,1,0,0));
+#define RAY_UNSET_SHADOW imageStore(rtPayloadImage, COORDS, imageLoad(rtPayloadImage, COORDS) - u8vec4(0,1,0,0));
 #define RAY_IS_GI (imageLoad(rtPayloadImage, COORDS).b > 0)
-#define RAY_SET_GI imageStore(rtPayloadImage, COORDS, imageLoad(rtPayloadImage, COORDS) + uvec4(0,0,1,0));
-#define RAY_UNSET_GI imageStore(rtPayloadImage, COORDS, imageLoad(rtPayloadImage, COORDS) * uvec4(1,1,0,1));
+#define RAY_SET_GI imageStore(rtPayloadImage, COORDS, imageLoad(rtPayloadImage, COORDS) + u8vec4(0,0,1,0));
+#define RAY_UNSET_GI imageStore(rtPayloadImage, COORDS, imageLoad(rtPayloadImage, COORDS) - u8vec4(0,0,1,0));
 #define INSTANCE renderer.renderableInstances[gl_InstanceID]
 #define GEOMETRY INSTANCE.geometries[gl_GeometryIndexEXT]
 #define AABB GEOMETRY.aabbs[gl_PrimitiveID]
@@ -1217,7 +1217,7 @@ float sdfSphere(vec3 p, float r) {
 }
 
 
-#line 755 "/home/olivier/projects/chill/src/v4d/modules/V4D_rays/assets/shaders/raytracing.glsl"
+#line 747 "/home/olivier/projects/chill/src/v4d/modules/V4D_rays/assets/shaders/raytracing.glsl"
 
 const float IndexOfRefraction = 1.33;
 

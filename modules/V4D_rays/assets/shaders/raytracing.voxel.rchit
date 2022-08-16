@@ -1121,14 +1121,14 @@ const float EPSILON = 0.00001;
 #define traceRayEXT {if (camera.debugViewMode == RENDERER_DEBUG_MODE_TRACE_RAY_COUNT) imageStore(img_debug, COORDS, imageLoad(img_debug, COORDS) + uvec4(0,0,0,1));} traceRayEXT
 #define DEBUG_TEST(color) {if (camera.debugViewMode == RENDERER_DEBUG_MODE_TEST) imageStore(img_debug, COORDS, color);}
 #define RAY_RECURSIONS imageLoad(rtPayloadImage, COORDS).r
-#define RAY_RECURSE imageStore(rtPayloadImage, COORDS, imageLoad(rtPayloadImage, COORDS) + uvec4(1,0,0,0));
-#define RAY_RECURSE_POP imageStore(rtPayloadImage, COORDS, imageLoad(rtPayloadImage, COORDS) - uvec4(1,0,0,0));
+#define RAY_RECURSE imageStore(rtPayloadImage, COORDS, imageLoad(rtPayloadImage, COORDS) + u8vec4(1,0,0,0));
+#define RAY_RECURSE_POP imageStore(rtPayloadImage, COORDS, imageLoad(rtPayloadImage, COORDS) - u8vec4(1,0,0,0));
 #define RAY_IS_SHADOW (imageLoad(rtPayloadImage, COORDS).g > 0)
-#define RAY_SET_SHADOW imageStore(rtPayloadImage, COORDS, imageLoad(rtPayloadImage, COORDS) + uvec4(0,1,0,0));
-#define RAY_UNSET_SHADOW imageStore(rtPayloadImage, COORDS, imageLoad(rtPayloadImage, COORDS) * uvec4(1,0,1,1));
+#define RAY_SET_SHADOW imageStore(rtPayloadImage, COORDS, imageLoad(rtPayloadImage, COORDS) + u8vec4(0,1,0,0));
+#define RAY_UNSET_SHADOW imageStore(rtPayloadImage, COORDS, imageLoad(rtPayloadImage, COORDS) - u8vec4(0,1,0,0));
 #define RAY_IS_GI (imageLoad(rtPayloadImage, COORDS).b > 0)
-#define RAY_SET_GI imageStore(rtPayloadImage, COORDS, imageLoad(rtPayloadImage, COORDS) + uvec4(0,0,1,0));
-#define RAY_UNSET_GI imageStore(rtPayloadImage, COORDS, imageLoad(rtPayloadImage, COORDS) * uvec4(1,1,0,1));
+#define RAY_SET_GI imageStore(rtPayloadImage, COORDS, imageLoad(rtPayloadImage, COORDS) + u8vec4(0,0,1,0));
+#define RAY_UNSET_GI imageStore(rtPayloadImage, COORDS, imageLoad(rtPayloadImage, COORDS) - u8vec4(0,0,1,0));
 #define INSTANCE renderer.renderableInstances[gl_InstanceID]
 #define GEOMETRY INSTANCE.geometries[gl_GeometryIndexEXT]
 #define AABB GEOMETRY.aabbs[gl_PrimitiveID]
@@ -1217,17 +1217,18 @@ float sdfSphere(vec3 p, float r) {
 }
 
 
-#line 470 "/home/olivier/projects/chill/src/v4d/modules/V4D_rays/assets/shaders/raytracing.glsl"
+#line 456 "/home/olivier/projects/chill/src/v4d/modules/V4D_rays/assets/shaders/raytracing.glsl"
 
 hitAttributeEXT VOXEL_INDEX_TYPE voxelIndex;
 
-const vec3[6] BOX_NORMAL_DIRS = {
+const vec3[7] BOX_NORMAL_DIRS = {
 	vec3(-1,0,0),
 	vec3(0,-1,0),
 	vec3(0,0,-1),
 	vec3(+1,0,0),
 	vec3(0,+1,0),
-	vec3(0,0,+1)
+	vec3(0,0,+1),
+	vec3(0)
 };
 
 const int nbAdjacentSides = 18;
@@ -1313,18 +1314,22 @@ vec3 GetAmbientLighting(in uint giIndex, in vec3 worldPosition, in vec3 posInVox
 }
 
 void main() {
-	if (RAY_IS_SHADOW) {
+	ray.hitDistance = -1;
+	ray.renderableIndex = -1;
+	
+	bool rayIsShadow = RAY_IS_SHADOW;
+	if (rayIsShadow) {
 		ray.hitDistance = 0;
 		return;
 	}
+	uint recursions = RAY_RECURSIONS;
+	bool rayIsGi = RAY_IS_GI;
 	
 	vec3 worldPosition = gl_WorldRayOriginEXT + gl_WorldRayDirectionEXT * gl_HitTEXT;
 	vec3 localPosition = gl_ObjectRayOriginEXT + gl_ObjectRayDirectionEXT * gl_HitTEXT;
 	
-	uint recursions = RAY_RECURSIONS;
-	bool rayIsGi = RAY_IS_GI;
-	
 	uint8_t normalIndex = uint8_t(gl_HitKindEXT);
+	if (normalIndex > 5) return;
 	if (AABB.extra == 0) return;
 	ChunkVoxelData voxelData = ChunkData(AABB.extra).voxels;
 	if (uint64_t(voxelData) == 0) return;
@@ -1418,6 +1423,7 @@ void main() {
 	if (RAY_RECURSIONS < RAY_MAX_RECURSION) {
 		RAY_SET_SHADOW
 		vec3 color = ray.color.rgb;
+		RAY_RECURSE
 		traceRayEXT(tlas, 0, RENDERABLE_STANDARD, 0/*rayType*/, 0/*nbRayTypes*/, 0/*missIndex*/, rayOrigin, cam.zNear, normalize(renderer.sunDir), cam.zFar, 0);
 		RAY_UNSET_SHADOW
 		if (ray.hitDistance == -1) {
@@ -1482,5 +1488,5 @@ void main() {
 	}
 }
 
-#line 735 "/home/olivier/projects/chill/src/v4d/modules/V4D_rays/assets/shaders/raytracing.glsl"
+#line 727 "/home/olivier/projects/chill/src/v4d/modules/V4D_rays/assets/shaders/raytracing.glsl"
 
