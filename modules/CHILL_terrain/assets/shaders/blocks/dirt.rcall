@@ -633,9 +633,9 @@ struct RendererData {
 	BUFFER_REFERENCE_ADDR(AimBuffer) aim;
 	BUFFER_REFERENCE_ADDR(GlobalIllumination) globalIllumination;
 	aligned_f32vec3 sunDir;
-	aligned_uint32_t _unused_1;
+	aligned_uint32_t giIteration;
 	aligned_f32vec3 skyLightColor;
-	aligned_uint32_t _unused_2;
+	aligned_float32_t waterWaves;
 	aligned_f32vec3 wireframeColor;
 	aligned_float32_t wireframeThickness;
 	aligned_i32vec3 worldOrigin;

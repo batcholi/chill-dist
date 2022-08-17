@@ -630,9 +630,9 @@ struct RendererData {
 	BUFFER_REFERENCE_ADDR(AimBuffer) aim;
 	BUFFER_REFERENCE_ADDR(GlobalIllumination) globalIllumination;
 	aligned_f32vec3 sunDir;
-	aligned_uint32_t _unused_1;
+	aligned_uint32_t giIteration;
 	aligned_f32vec3 skyLightColor;
-	aligned_uint32_t _unused_2;
+	aligned_float32_t waterWaves;
 	aligned_f32vec3 wireframeColor;
 	aligned_float32_t wireframeThickness;
 	aligned_i32vec3 worldOrigin;
@@ -1083,10 +1083,19 @@ float SimplexFractal(vec3 pos, int octaves) {
 	_normal = normalize(_TBN * _bump);\
 }
 #line 4 "/home/olivier/projects/chill/src/v4d/modules/V4D_rays/assets/shaders/raytracing.glsl"
+#line 1 "/home/olivier/projects/chill/src/v4d/game/water.hh"
+#line 2 "/home/olivier/projects/chill/src/v4d/game/water.hh"
+
+#define WATER_LEVEL 199.25
+#define WATER_MAX_LIGHT_DEPTH 32
+#define WATER_IOR 1.33
+#define WATER_OPACITY 0.5
+#define WATER_COLOR (vec3(0.3,0.5,0.8) * renderer.skyLightColor)
+#line 5 "/home/olivier/projects/chill/src/v4d/modules/V4D_rays/assets/shaders/raytracing.glsl"
 
 layout(set = 1, binding = SET1_BINDING_TLAS) uniform accelerationStructureEXT tlas;
 layout(set = 1, binding = SET1_BINDING_RENDERER_DATA) buffer RendererDataBuffer { RendererData renderer; };
-layout(set = 1, binding = SET1_BINDING_RT_PAYLOAD_IMAGE, rgba8ui) uniform uimage2D rtPayloadImage; // Recursions, Shadow, Gi, ?
+layout(set = 1, binding = SET1_BINDING_RT_PAYLOAD_IMAGE, rgba8ui) uniform uimage2D rtPayloadImage; // Recursions, Shadow, Gi, Underwater
 
 layout(push_constant) uniform PushConstant {
 	RayTracingPushConstant pushConstant;
@@ -1121,14 +1130,17 @@ const float EPSILON = 0.00001;
 #define traceRayEXT {if (camera.debugViewMode == RENDERER_DEBUG_MODE_TRACE_RAY_COUNT) imageStore(img_debug, COORDS, imageLoad(img_debug, COORDS) + uvec4(0,0,0,1));} traceRayEXT
 #define DEBUG_TEST(color) {if (camera.debugViewMode == RENDERER_DEBUG_MODE_TEST) imageStore(img_debug, COORDS, color);}
 #define RAY_RECURSIONS imageLoad(rtPayloadImage, COORDS).r
-#define RAY_RECURSE imageStore(rtPayloadImage, COORDS, imageLoad(rtPayloadImage, COORDS) + u8vec4(1,0,0,0));
-#define RAY_RECURSE_POP imageStore(rtPayloadImage, COORDS, imageLoad(rtPayloadImage, COORDS) - u8vec4(1,0,0,0));
+#define RAY_RECURSION_PUSH imageStore(rtPayloadImage, COORDS, imageLoad(rtPayloadImage, COORDS) + u8vec4(1,0,0,0));
+#define RAY_RECURSION_POP imageStore(rtPayloadImage, COORDS, imageLoad(rtPayloadImage, COORDS) - u8vec4(1,0,0,0));
 #define RAY_IS_SHADOW (imageLoad(rtPayloadImage, COORDS).g > 0)
-#define RAY_SET_SHADOW imageStore(rtPayloadImage, COORDS, imageLoad(rtPayloadImage, COORDS) + u8vec4(0,1,0,0));
-#define RAY_UNSET_SHADOW imageStore(rtPayloadImage, COORDS, imageLoad(rtPayloadImage, COORDS) - u8vec4(0,1,0,0));
+#define RAY_SHADOW_PUSH imageStore(rtPayloadImage, COORDS, imageLoad(rtPayloadImage, COORDS) + u8vec4(0,1,0,0));
+#define RAY_SHADOW_POP imageStore(rtPayloadImage, COORDS, imageLoad(rtPayloadImage, COORDS) - u8vec4(0,1,0,0));
 #define RAY_IS_GI (imageLoad(rtPayloadImage, COORDS).b > 0)
-#define RAY_SET_GI imageStore(rtPayloadImage, COORDS, imageLoad(rtPayloadImage, COORDS) + u8vec4(0,0,1,0));
-#define RAY_UNSET_GI imageStore(rtPayloadImage, COORDS, imageLoad(rtPayloadImage, COORDS) - u8vec4(0,0,1,0));
+#define RAY_GI_PUSH imageStore(rtPayloadImage, COORDS, imageLoad(rtPayloadImage, COORDS) + u8vec4(0,0,1,0));
+#define RAY_GI_POP imageStore(rtPayloadImage, COORDS, imageLoad(rtPayloadImage, COORDS) - u8vec4(0,0,1,0));
+#define RAY_IS_UNDERWATER (imageLoad(rtPayloadImage, COORDS).a > 0)
+#define RAY_UNDERWATER_PUSH imageStore(rtPayloadImage, COORDS, imageLoad(rtPayloadImage, COORDS) + u8vec4(0,0,0,1));
+#define RAY_UNDERWATER_POP imageStore(rtPayloadImage, COORDS, imageLoad(rtPayloadImage, COORDS) - u8vec4(0,0,0,1));
 #define INSTANCE renderer.renderableInstances[gl_InstanceID]
 #define GEOMETRY INSTANCE.geometries[gl_GeometryIndexEXT]
 #define AABB GEOMETRY.aabbs[gl_PrimitiveID]
@@ -1141,11 +1153,10 @@ const float EPSILON = 0.00001;
 #define MVP_AA (camera.projectionMatrixWithTAA * MODELVIEW)
 #define MVP_HISTORY (camera.projectionMatrix * MODELVIEW_HISTORY)
 #define COMPUTE_BOX_INTERSECTION \
-	const vec3 _invDir = 1.0 / gl_ObjectRayDirectionEXT;\
-	const vec3 _tbot   = _invDir * (AABB_MIN - gl_ObjectRayOriginEXT);\
-	const vec3 _ttop   = _invDir * (AABB_MAX - gl_ObjectRayOriginEXT);\
-	const vec3 _tmin   = min(_ttop, _tbot);\
-	const vec3 _tmax   = max(_ttop, _tbot);\
+	const vec3 _tbot = (AABB_MIN - gl_ObjectRayOriginEXT) / gl_ObjectRayDirectionEXT;\
+	const vec3 _ttop = (AABB_MAX - gl_ObjectRayOriginEXT) / gl_ObjectRayDirectionEXT;\
+	const vec3 _tmin = min(_ttop, _tbot);\
+	const vec3 _tmax = max(_ttop, _tbot);\
 	const float T1 = max(_tmin.x, max(_tmin.y, _tmin.z));\
 	const float T2 = min(_tmax.x, min(_tmax.y, _tmax.z));
 #define RAY_STARTS_OUTSIDE_T1_T2 (gl_RayTminEXT <= T1 && T1 < gl_RayTmaxEXT && T2 > T1)
@@ -1217,7 +1228,7 @@ float sdfSphere(vec3 p, float r) {
 }
 
 
-#line 138 "/home/olivier/projects/chill/src/v4d/modules/V4D_rays/assets/shaders/raytracing.glsl"
+#line 141 "/home/olivier/projects/chill/src/v4d/modules/V4D_rays/assets/shaders/raytracing.glsl"
 void main() {
 	const ivec2 pixelInMiddleOfScreen = ivec2(gl_LaunchSizeEXT.xy) / 2;
 	const bool isMiddleOfScreen = (COORDS == pixelInMiddleOfScreen);
@@ -1226,7 +1237,7 @@ void main() {
 	const vec3 initialRayPosition = inverse(cam.viewMatrix)[3].xyz;
 	const vec3 initialRayDirection = normalize(VIEW2WORLDNORMAL * normalize(vec4(inverse(mat4(cam.projectionMatrixWithTAA)) * vec4(uv*2-1, 1, 1)).xyz));
 	
-	imageStore(rtPayloadImage, COORDS, uvec4(0));
+	imageStore(rtPayloadImage, COORDS, u8vec4(0));
 	if (camera.debugViewMode != 0) {
 		imageStore(img_debug, COORDS, vec4(0));
 	}
@@ -1306,7 +1317,7 @@ void main() {
 			imageStore(img_debug, COORDS, vec4(hitSomething? Heatmap(pow(ray.hitDistance / 1000 * cam.debugViewScale, 0.4)) : vec3(0), 1));
 			break;
 		case RENDERER_DEBUG_MODE_REFLECTIVITY:
-			// imageStore(img_debug, COORDS, vec4(vec3(ray.reflection), 1));
+			// imageStore(img_debug, COORDS, vec4(Heatmap(float(ray.renderableIndex+1)/10), 1));
 			break;
 		case RENDERER_DEBUG_MODE_TRANSPARENCY:
 			imageStore(img_debug, COORDS, vec4(vec3(1 - ray.color.a), 1));

@@ -630,9 +630,9 @@ struct RendererData {
 	BUFFER_REFERENCE_ADDR(AimBuffer) aim;
 	BUFFER_REFERENCE_ADDR(GlobalIllumination) globalIllumination;
 	aligned_f32vec3 sunDir;
-	aligned_uint32_t _unused_1;
+	aligned_uint32_t giIteration;
 	aligned_f32vec3 skyLightColor;
-	aligned_uint32_t _unused_2;
+	aligned_float32_t waterWaves;
 	aligned_f32vec3 wireframeColor;
 	aligned_float32_t wireframeThickness;
 	aligned_i32vec3 worldOrigin;
@@ -1083,10 +1083,19 @@ float SimplexFractal(vec3 pos, int octaves) {
 	_normal = normalize(_TBN * _bump);\
 }
 #line 4 "/home/olivier/projects/chill/src/v4d/modules/V4D_rays/assets/shaders/raytracing.glsl"
+#line 1 "/home/olivier/projects/chill/src/v4d/game/water.hh"
+#line 2 "/home/olivier/projects/chill/src/v4d/game/water.hh"
+
+#define WATER_LEVEL 199.25
+#define WATER_MAX_LIGHT_DEPTH 32
+#define WATER_IOR 1.33
+#define WATER_OPACITY 0.5
+#define WATER_COLOR (vec3(0.3,0.5,0.8) * renderer.skyLightColor)
+#line 5 "/home/olivier/projects/chill/src/v4d/modules/V4D_rays/assets/shaders/raytracing.glsl"
 
 layout(set = 1, binding = SET1_BINDING_TLAS) uniform accelerationStructureEXT tlas;
 layout(set = 1, binding = SET1_BINDING_RENDERER_DATA) buffer RendererDataBuffer { RendererData renderer; };
-layout(set = 1, binding = SET1_BINDING_RT_PAYLOAD_IMAGE, rgba8ui) uniform uimage2D rtPayloadImage; // Recursions, Shadow, Gi, ?
+layout(set = 1, binding = SET1_BINDING_RT_PAYLOAD_IMAGE, rgba8ui) uniform uimage2D rtPayloadImage; // Recursions, Shadow, Gi, Underwater
 
 layout(push_constant) uniform PushConstant {
 	RayTracingPushConstant pushConstant;
@@ -1121,14 +1130,17 @@ const float EPSILON = 0.00001;
 #define traceRayEXT {if (camera.debugViewMode == RENDERER_DEBUG_MODE_TRACE_RAY_COUNT) imageStore(img_debug, COORDS, imageLoad(img_debug, COORDS) + uvec4(0,0,0,1));} traceRayEXT
 #define DEBUG_TEST(color) {if (camera.debugViewMode == RENDERER_DEBUG_MODE_TEST) imageStore(img_debug, COORDS, color);}
 #define RAY_RECURSIONS imageLoad(rtPayloadImage, COORDS).r
-#define RAY_RECURSE imageStore(rtPayloadImage, COORDS, imageLoad(rtPayloadImage, COORDS) + u8vec4(1,0,0,0));
-#define RAY_RECURSE_POP imageStore(rtPayloadImage, COORDS, imageLoad(rtPayloadImage, COORDS) - u8vec4(1,0,0,0));
+#define RAY_RECURSION_PUSH imageStore(rtPayloadImage, COORDS, imageLoad(rtPayloadImage, COORDS) + u8vec4(1,0,0,0));
+#define RAY_RECURSION_POP imageStore(rtPayloadImage, COORDS, imageLoad(rtPayloadImage, COORDS) - u8vec4(1,0,0,0));
 #define RAY_IS_SHADOW (imageLoad(rtPayloadImage, COORDS).g > 0)
-#define RAY_SET_SHADOW imageStore(rtPayloadImage, COORDS, imageLoad(rtPayloadImage, COORDS) + u8vec4(0,1,0,0));
-#define RAY_UNSET_SHADOW imageStore(rtPayloadImage, COORDS, imageLoad(rtPayloadImage, COORDS) - u8vec4(0,1,0,0));
+#define RAY_SHADOW_PUSH imageStore(rtPayloadImage, COORDS, imageLoad(rtPayloadImage, COORDS) + u8vec4(0,1,0,0));
+#define RAY_SHADOW_POP imageStore(rtPayloadImage, COORDS, imageLoad(rtPayloadImage, COORDS) - u8vec4(0,1,0,0));
 #define RAY_IS_GI (imageLoad(rtPayloadImage, COORDS).b > 0)
-#define RAY_SET_GI imageStore(rtPayloadImage, COORDS, imageLoad(rtPayloadImage, COORDS) + u8vec4(0,0,1,0));
-#define RAY_UNSET_GI imageStore(rtPayloadImage, COORDS, imageLoad(rtPayloadImage, COORDS) - u8vec4(0,0,1,0));
+#define RAY_GI_PUSH imageStore(rtPayloadImage, COORDS, imageLoad(rtPayloadImage, COORDS) + u8vec4(0,0,1,0));
+#define RAY_GI_POP imageStore(rtPayloadImage, COORDS, imageLoad(rtPayloadImage, COORDS) - u8vec4(0,0,1,0));
+#define RAY_IS_UNDERWATER (imageLoad(rtPayloadImage, COORDS).a > 0)
+#define RAY_UNDERWATER_PUSH imageStore(rtPayloadImage, COORDS, imageLoad(rtPayloadImage, COORDS) + u8vec4(0,0,0,1));
+#define RAY_UNDERWATER_POP imageStore(rtPayloadImage, COORDS, imageLoad(rtPayloadImage, COORDS) - u8vec4(0,0,0,1));
 #define INSTANCE renderer.renderableInstances[gl_InstanceID]
 #define GEOMETRY INSTANCE.geometries[gl_GeometryIndexEXT]
 #define AABB GEOMETRY.aabbs[gl_PrimitiveID]
@@ -1141,11 +1153,10 @@ const float EPSILON = 0.00001;
 #define MVP_AA (camera.projectionMatrixWithTAA * MODELVIEW)
 #define MVP_HISTORY (camera.projectionMatrix * MODELVIEW_HISTORY)
 #define COMPUTE_BOX_INTERSECTION \
-	const vec3 _invDir = 1.0 / gl_ObjectRayDirectionEXT;\
-	const vec3 _tbot   = _invDir * (AABB_MIN - gl_ObjectRayOriginEXT);\
-	const vec3 _ttop   = _invDir * (AABB_MAX - gl_ObjectRayOriginEXT);\
-	const vec3 _tmin   = min(_ttop, _tbot);\
-	const vec3 _tmax   = max(_ttop, _tbot);\
+	const vec3 _tbot = (AABB_MIN - gl_ObjectRayOriginEXT) / gl_ObjectRayDirectionEXT;\
+	const vec3 _ttop = (AABB_MAX - gl_ObjectRayOriginEXT) / gl_ObjectRayDirectionEXT;\
+	const vec3 _tmin = min(_ttop, _tbot);\
+	const vec3 _tmax = max(_ttop, _tbot);\
 	const float T1 = max(_tmin.x, max(_tmin.y, _tmin.z));\
 	const float T2 = min(_tmax.x, min(_tmax.y, _tmax.z));
 #define RAY_STARTS_OUTSIDE_T1_T2 (gl_RayTminEXT <= T1 && T1 < gl_RayTmaxEXT && T2 > T1)
@@ -1217,7 +1228,7 @@ float sdfSphere(vec3 p, float r) {
 }
 
 
-#line 456 "/home/olivier/projects/chill/src/v4d/modules/V4D_rays/assets/shaders/raytracing.glsl"
+#line 457 "/home/olivier/projects/chill/src/v4d/modules/V4D_rays/assets/shaders/raytracing.glsl"
 
 hitAttributeEXT VOXEL_INDEX_TYPE voxelIndex;
 
@@ -1260,13 +1271,13 @@ bool LockAmbientLighting(in uint giIndex) {
 	return atomicExchange(GetGi(giIndex).lock, 1) != 1;
 }
 void WriteAmbientLighting(in uint giIndex, in vec3 worldPosition, in vec3 normal, in vec3 color) {
-	// GetGi(giIndex).iteration = renderer.giIteration;
-	GetGi(giIndex).frameIndex = int64_t(camera.frameIndex);
 	vec4 radiance = GetGi(giIndex).radiance;
 	float accumulation = clamp(radiance.a + 1, 1, MAX_GI_ACCUMULATION);
-	if (abs(GetGi(giIndex).frameIndex - int64_t(camera.frameIndex)) >= ACCUMULATOR_MAX_FRAME_INDEX_DIFF) {
+	if (abs(GetGi(giIndex).frameIndex - int64_t(camera.frameIndex)) >= ACCUMULATOR_MAX_FRAME_INDEX_DIFF || GetGi(giIndex).iteration != renderer.giIteration) {
 		accumulation = 1;
 	}
+	GetGi(giIndex).iteration = renderer.giIteration;
+	GetGi(giIndex).frameIndex = int64_t(camera.frameIndex);
 	vec3 l = mix(radiance.rgb, color, clamp(1.0/accumulation, 0, 1));
 	if (isnan(l.r) || isnan(l.g) || isnan(l.b) || isnan(accumulation)) {
 		l = vec3(0);
@@ -1278,20 +1289,22 @@ void WriteAmbientLighting(in uint giIndex, in vec3 worldPosition, in vec3 normal
 	uint level1GiIndex = GetGiIndex(worldPosition, 1);
 	vec4 level1Radiance = GetGi(level1GiIndex).radiance;
 	accumulation = clamp(level1Radiance.a + 1, 1, MAX_GI_ACCUMULATION/2);
-	if (abs(GetGi(level1GiIndex).frameIndex - int64_t(camera.frameIndex)) >= ACCUMULATOR_MAX_FRAME_INDEX_DIFF) {
+	if (abs(GetGi(level1GiIndex).frameIndex - int64_t(camera.frameIndex)) >= ACCUMULATOR_MAX_FRAME_INDEX_DIFF || GetGi(level1GiIndex).iteration != renderer.giIteration) {
 		accumulation = 1;
 	}
 	GetGi(level1GiIndex).radiance = vec4(mix(level1Radiance.rgb, l, 0.5/accumulation), accumulation);
+	GetGi(level1GiIndex).iteration = renderer.giIteration;
 	GetGi(level1GiIndex).frameIndex = int64_t(camera.frameIndex);
 	for (int i = 0; i < nbAdjacentSides; ++i) {
 		if (abs(dot(vec3(adjacentSides[i]), normal)) < 0.01) {
 			uint adjacentGiIndex = GetGiIndex(worldPosition + adjacentSides[i], 1);
 			vec4 level1AdjacentRadiance = GetGi(adjacentGiIndex).radiance;
 			accumulation = clamp(level1AdjacentRadiance.a + 1, 1, MAX_GI_ACCUMULATION/4);
-			if (abs(GetGi(adjacentGiIndex).frameIndex - int64_t(camera.frameIndex)) >= ACCUMULATOR_MAX_FRAME_INDEX_DIFF) {
+			if (abs(GetGi(adjacentGiIndex).frameIndex - int64_t(camera.frameIndex)) >= ACCUMULATOR_MAX_FRAME_INDEX_DIFF || GetGi(adjacentGiIndex).iteration != renderer.giIteration) {
 				accumulation = 1;
 			}
 			GetGi(adjacentGiIndex).radiance = vec4(mix(level1AdjacentRadiance.rgb, l, 0.5/accumulation), accumulation);
+			GetGi(adjacentGiIndex).iteration = renderer.giIteration;
 			GetGi(adjacentGiIndex).frameIndex = int64_t(camera.frameIndex);
 		}
 	}
@@ -1310,7 +1323,7 @@ vec3 GetAmbientLighting(in uint giIndex, in vec3 worldPosition, in vec3 posInVox
 		}
 		return pow(lighting.rgb / lighting.a, vec3(2.0)) + 0.0003;
 	}
-	return vec3(0.05);
+	return vec3(0.0007);
 }
 
 void main() {
@@ -1324,6 +1337,7 @@ void main() {
 	}
 	uint recursions = RAY_RECURSIONS;
 	bool rayIsGi = RAY_IS_GI;
+	bool rayIsUnderWater = RAY_IS_UNDERWATER;
 	
 	vec3 worldPosition = gl_WorldRayOriginEXT + gl_WorldRayDirectionEXT * gl_HitTEXT;
 	vec3 localPosition = gl_ObjectRayOriginEXT + gl_ObjectRayDirectionEXT * gl_HitTEXT;
@@ -1397,9 +1411,9 @@ void main() {
 				Refract(refractDir, thisSurface.normal, thisSurface.ior);
 				bounceDirection = normalize(mix(refractDir, bounceDirection, thisSurface.diffuse*thisSurface.diffuse));
 			}
-			RAY_RECURSE
-			traceRayEXT(tlas, 0, RENDERABLE_STANDARD, 0/*rayType*/, 0/*nbRayTypes*/, 0/*missIndex*/, rayOrigin, cam.zNear, bounceDirection, cam.zFar, 0);
-			RAY_UNSET_SHADOW
+			RAY_RECURSION_PUSH
+				traceRayEXT(tlas, 0, RENDERABLE_STANDARD, 0/*rayType*/, 0/*nbRayTypes*/, 0/*missIndex*/, rayOrigin, cam.zNear, bounceDirection, cam.zFar, 0);
+			RAY_RECURSION_POP
 			ray.color.rgb /= mix(3.141592654, 1, thisSurface.metallic);
 		}
 		ray.color.rgb *= thisSurface.color.rgb;
@@ -1407,33 +1421,44 @@ void main() {
 	} else if (recursions < RAY_MAX_RECURSION && LockAmbientLighting(giIndex)) {
 		vec3 bounceDirection = normalize(thisSurface.normal + RandomInUnitSphere(seed));
 		float nDotL = clamp(dot(thisSurface.normal, bounceDirection), 0, 1);
-		RAY_SET_GI
-		RAY_RECURSE
-		traceRayEXT(tlas, 0, RENDERABLE_STANDARD, 0/*rayType*/, 0/*nbRayTypes*/, 0/*missIndex*/, facingWorldPosition, cam.zNear, bounceDirection, 32, 0);
-		RAY_RECURSE_POP
-		RAY_UNSET_GI
+		RAY_RECURSION_PUSH
+			RAY_GI_PUSH
+				traceRayEXT(tlas, 0, RENDERABLE_STANDARD_EXCEPT_WATER, 0/*rayType*/, 0/*nbRayTypes*/, 0/*missIndex*/, facingWorldPosition, cam.zNear, bounceDirection, 32, 0);
+			RAY_GI_POP
+		RAY_RECURSION_POP
 		ray.color.rgb *= nDotL;
 		ray.color.rgb *= smoothstep(32, 0, ray.hitDistance);
+		if (rayIsUnderWater) {
+			ray.color.rgb *= WATER_OPACITY;
+		}
 		WriteAmbientLighting(giIndex, facingWorldPosition, BOX_NORMAL_DIRS[normalIndex], ray.color.rgb);
 	}
 	if (!rayIsGi && (camera.options & RENDER_OPTION_ACCUMULATE) == 0) {
 		ray.color.rgb = thisSurface.color.rgb * GetAmbientLighting(giIndex1, facingWorldPosition, thisSurface.posInVoxel, BOX_NORMAL_DIRS[normalIndex]);
 	}
 	
-	if (RAY_RECURSIONS < RAY_MAX_RECURSION) {
-		RAY_SET_SHADOW
-		vec3 color = ray.color.rgb;
-		RAY_RECURSE
-		traceRayEXT(tlas, 0, RENDERABLE_STANDARD, 0/*rayType*/, 0/*nbRayTypes*/, 0/*missIndex*/, rayOrigin, cam.zNear, normalize(renderer.sunDir), cam.zFar, 0);
-		RAY_UNSET_SHADOW
+	// Direct Lighting
+	if (RAY_RECURSIONS < RAY_MAX_RECURSION && (WATER_LEVEL - localPosition.y) < WATER_MAX_LIGHT_DEPTH) {
+		RAY_RECURSION_PUSH
+			RAY_SHADOW_PUSH
+				vec3 color = ray.color.rgb;
+				ray.color.rgb = vec3(0);
+				traceRayEXT(tlas, 0, RENDERABLE_STANDARD_EXCEPT_WATER, 0/*rayType*/, 0/*nbRayTypes*/, 0/*missIndex*/, rayOrigin, cam.zNear, normalize(renderer.sunDir), cam.zFar, 0);
+			RAY_SHADOW_POP
+		RAY_RECURSION_POP
 		if (ray.hitDistance == -1) {
 			// lit
-			if (rayIsGi) {
-				// ray.color.rgb = color + thisSurface.color.rgb * ray.color.rgb * 0.05;
-				ray.color.rgb = pow(color + thisSurface.color.rgb * ray.color.rgb, vec3(0.25)) * 0.5;
+			if (rayIsUnderWater) {
+				ray.color.rgb = color + thisSurface.color.rgb * renderer.skyLightColor * pow(1-clamp((WATER_LEVEL - localPosition.y) / WATER_MAX_LIGHT_DEPTH, 0, 1), 4) * WATER_OPACITY;
 			} else {
-				ray.color.rgb = color + thisSurface.color.rgb * renderer.skyLightColor;
+				if (rayIsGi) {
+					ray.color.rgb = pow(color + thisSurface.color.rgb * ray.color.rgb, vec3(0.25)) * 0.5;
+				} else {
+					ray.color.rgb = color + thisSurface.color.rgb * renderer.skyLightColor;
+				}
 			}
+		} else {
+			ray.color.rgb = color;
 		}
 	}
 	
@@ -1488,5 +1513,5 @@ void main() {
 	}
 }
 
-#line 727 "/home/olivier/projects/chill/src/v4d/modules/V4D_rays/assets/shaders/raytracing.glsl"
+#line 742 "/home/olivier/projects/chill/src/v4d/modules/V4D_rays/assets/shaders/raytracing.glsl"
 
