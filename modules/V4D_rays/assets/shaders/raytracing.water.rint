@@ -1228,7 +1228,7 @@ float sdfSphere(vec3 p, float r) {
 }
 
 
-#line 751 "/home/olivier/projects/chill/src/v4d/modules/V4D_rays/assets/shaders/raytracing.glsl"
+#line 822 "/home/olivier/projects/chill/src/v4d/modules/V4D_rays/assets/shaders/raytracing.glsl"
 void main() {
 	COMPUTE_BOX_INTERSECTION
 	if (RAY_STARTS_OUTSIDE_T1_T2) {

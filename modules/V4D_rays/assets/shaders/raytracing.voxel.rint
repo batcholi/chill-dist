@@ -1264,38 +1264,36 @@ void ReportIntersection(in vec3 pos, in vec3 rayOrigin, in vec3 rayDir, in bvec3
 	// Compute actual T
 	
 	
-	
-	// const vec3 tmin = min((pos - rayOrigin) / rayDir, (pos + voxelSize - rayOrigin) / rayDir);
-	// const float T = max(gl_RayTminEXT, max(tmin.x, max(tmin.y, tmin.z)));
-	// // Store Normal Index in gl_HitKindEXT
-	// uint8_t normalIndex = uint8_t(
-	// 	  int(bNormalMask.x) * (3 - 3 * max(0, iStepDir.x))
-	// 	+ int(bNormalMask.y) * (4 - 3 * max(0, iStepDir.y))
-	// 	+ int(bNormalMask.z) * (5 - 3 * max(0, iStepDir.z))
-	// );
-	// reportIntersectionEXT(T, normalIndex);
-	
-	
-	
-	const vec3 _tbot = (pos + voxelSize - rayOrigin) / rayDir;
-	const vec3 _ttop = (pos - rayOrigin) / rayDir;
-	const vec3 _tmin = min(_ttop, _tbot);
-	const vec3 _tmax = max(_ttop, _tbot);
-	const float T1 = max(_tmin.x, max(_tmin.y, _tmin.z));
-	const float T2 = min(_tmax.x, min(_tmax.y, _tmax.z));
-	uint8_t normalIndex = uint8_t(
-		  int(bNormalMask.x) * (3 - 3 * max(0, iStepDir.x))
-		+ int(bNormalMask.y) * (4 - 3 * max(0, iStepDir.y))
-		+ int(bNormalMask.z) * (5 - 3 * max(0, iStepDir.z))
-	);
-	if (T1 > gl_RayTminEXT) {
-		// Exterior
-		reportIntersectionEXT(T1, normalIndex);
+	if (voxelSize == 1) {
+		const vec3 tmin = min((pos - rayOrigin) / rayDir, (pos + voxelSize - rayOrigin) / rayDir);
+		const float T = max(gl_RayTminEXT, max(tmin.x, max(tmin.y, tmin.z)));
+		// Store Normal Index in gl_HitKindEXT
+		uint8_t normalIndex = uint8_t(
+			int(bNormalMask.x) * (3 - 3 * max(0, iStepDir.x))
+			+ int(bNormalMask.y) * (4 - 3 * max(0, iStepDir.y))
+			+ int(bNormalMask.z) * (5 - 3 * max(0, iStepDir.z))
+		);
+		reportIntersectionEXT(T, normalIndex);
 	} else {
-		// Interior
-		reportIntersectionEXT(T2, normalIndex);
+		const vec3 _tbot = (pos + voxelSize - rayOrigin) / rayDir;
+		const vec3 _ttop = (pos - rayOrigin) / rayDir;
+		const vec3 _tmin = min(_ttop, _tbot);
+		const vec3 _tmax = max(_ttop, _tbot);
+		const float T1 = max(_tmin.x, max(_tmin.y, _tmin.z));
+		const float T2 = min(_tmax.x, min(_tmax.y, _tmax.z));
+		uint8_t normalIndex = uint8_t(
+			int(bNormalMask.x) * (3 - 3 * max(0, iStepDir.x))
+			+ int(bNormalMask.y) * (4 - 3 * max(0, iStepDir.y))
+			+ int(bNormalMask.z) * (5 - 3 * max(0, iStepDir.z))
+		);
+		if (T1 > gl_RayTminEXT) {
+			// Exterior
+			reportIntersectionEXT(T1, normalIndex);
+		} else {
+			// Interior
+			reportIntersectionEXT(T2, normalIndex);
+		}
 	}
-	
 	
 	
 	if (camera.debugViewMode == RENDERER_DEBUG_MODE_RAYINT_TIME) WRITE_DEBUG_TIME

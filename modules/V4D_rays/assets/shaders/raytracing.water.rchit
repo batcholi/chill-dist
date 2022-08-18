@@ -1228,7 +1228,7 @@ float sdfSphere(vec3 p, float r) {
 }
 
 
-#line 762 "/home/olivier/projects/chill/src/v4d/modules/V4D_rays/assets/shaders/raytracing.glsl"
+#line 833 "/home/olivier/projects/chill/src/v4d/modules/V4D_rays/assets/shaders/raytracing.glsl"
 
 void ApplyUnderwaterFog() {
 	const vec3 origin = gl_WorldRayOriginEXT;
@@ -1241,11 +1241,52 @@ void ApplyUnderwaterFog() {
 	ray.color.rgb = min(mix(normalize(fogColor), ray.color.rgb, 0.999), mix(ray.color.rgb, fogColor, fogStrength));
 }
 
+
+#define RAIN_DROP_HASHSCALE1 .1031
+#define RAIN_DROP_HASHSCALE3 vec3(.1031, .1030, .0973)
+#define RAIN_DROP_MAX_RADIUS 2
+float hash12(vec2 p) {
+	vec3 p3  = fract(vec3(p.xyx) * RAIN_DROP_HASHSCALE1);
+	p3 += dot(p3, p3.yzx + 19.19);
+	return fract((p3.x + p3.y) * p3.z);
+}
+vec2 hash22(vec2 p) {
+	vec3 p3 = fract(vec3(p.xyx) * RAIN_DROP_HASHSCALE3);
+	p3 += dot(p3, p3.yzx+19.19);
+	return fract((p3.xx+p3.yz)*p3.zy);
+}
+float RainDrops(vec3 pos) {
+	float t = float(renderer.timestamp);
+	vec2 uv = pos.xz;
+	vec2 p0 = floor(uv);
+	vec2 circles = vec2(0.);
+	for (int j = -RAIN_DROP_MAX_RADIUS; j <= RAIN_DROP_MAX_RADIUS; ++j) {
+		for (int i = -RAIN_DROP_MAX_RADIUS; i <= RAIN_DROP_MAX_RADIUS; ++i) {
+			vec2 pi = p0 + vec2(i, j);
+			vec2 hsh = pi;
+			vec2 p = pi + hash22(hsh);
+			float t = fract(0.3*t + hash12(hsh));
+			vec2 v = p - uv;
+			float d = length(v) - (float(RAIN_DROP_MAX_RADIUS) + 1.)*t;
+			float h = 1e-3;
+			float d1 = d - h;
+			float d2 = d + h;
+			float p1 = sin(31.*d1) * smoothstep(-0.6, -0.3, d1) * smoothstep(0., -0.3, d1);
+			float p2 = sin(31.*d2) * smoothstep(-0.6, -0.3, d2) * smoothstep(0., -0.3, d2);
+			circles += 0.5 * normalize(v) * ((p2 - p1) / (2. * h) * (1. - t) * (1. - t));
+		}
+	}
+	circles /= float((RAIN_DROP_MAX_RADIUS*2+1)*(RAIN_DROP_MAX_RADIUS*2+1));
+	return dot(circles, circles);
+}
+
+
 float WaterWaves(vec3 pos) {
 	return 0
 		+ Simplex(vec3(pos.xz*0.05, float(renderer.timestamp - pos.z*0.5)*0.5))*2
 		+ Simplex(vec3(pos.xz*0.3, float(renderer.timestamp - pos.z)))
 		+ Simplex(vec3(pos.xz*vec2(2, 4), float(renderer.timestamp - pos.z*2)))*0.5
+		// + RainDrops(pos)*4
 	;
 }
 
@@ -1276,6 +1317,7 @@ void main() {
 	vec3 localPosition = gl_ObjectRayOriginEXT + gl_ObjectRayDirectionEXT * gl_HitTEXT;
 	
 	const float waterWavesStrength = pow(renderer.waterWaves, 2);
+	const float waterWavesSize = 4;
 	
 	if (gl_HitKindEXT == WATER_INTERSECTION_ABOVE) {
 		// Above water
@@ -1290,7 +1332,7 @@ void main() {
 		// Reflection on top of water surface
 		vec3 reflectDir = normalize(reflect(gl_WorldRayDirectionEXT, surfaceNormal));
 		RAY_RECURSION_PUSH
-			ray.color.rgb = vec3(0);
+			ray.color = vec4(0);
 			traceRayEXT(tlas, 0, RENDERABLE_STANDARD_EXCEPT_WATER, 0/*rayType*/, 0/*nbRayTypes*/, 0/*missIndex*/, worldPosition, cam.zNear, reflectDir, cam.zFar, 0);
 		RAY_RECURSION_POP
 		reflection = ray.color.rgb;
@@ -1300,13 +1342,13 @@ void main() {
 		if (Refract(rayDirection, surfaceNormal, WATER_IOR)) {
 			RAY_RECURSION_PUSH
 				RAY_UNDERWATER_PUSH
-					ray.color.rgb = vec3(0);
+					ray.color = vec4(0);
 					traceRayEXT(tlas, 0, RENDERABLE_STANDARD_EXCEPT_WATER, 0/*rayType*/, 0/*nbRayTypes*/, 0/*missIndex*/, worldPosition, camera.zNear, rayDirection, WATER_MAX_LIGHT_DEPTH, 0);
 				RAY_UNDERWATER_POP
 			RAY_RECURSION_POP
 			if (ray.hitDistance == -1) {
 				ray.hitDistance = WATER_MAX_LIGHT_DEPTH;
-				ray.color.rgb = vec3(0);
+				ray.color = vec4(0);
 			}
 			refraction = ray.color.rgb * (1-clamp(ray.hitDistance / WATER_MAX_LIGHT_DEPTH, 0, 1));
 		}
@@ -1334,7 +1376,7 @@ void main() {
 			vec3 rayDirection = gl_WorldRayDirectionEXT;
 			RAY_RECURSION_PUSH
 				RAY_UNDERWATER_PUSH
-					ray.color.rgb = vec3(0);
+					ray.color = vec4(0);
 					traceRayEXT(tlas, 0, RENDERABLE_STANDARD_EXCEPT_WATER, 0/*rayType*/, 0/*nbRayTypes*/, 0/*missIndex*/, rayPosition, camera.zNear, rayDirection, distanceToSurface, 0);
 				RAY_UNDERWATER_POP
 			RAY_RECURSION_POP
@@ -1347,7 +1389,7 @@ void main() {
 					maxRayDistance = WATER_MAX_LIGHT_DEPTH;
 				}
 				RAY_RECURSION_PUSH
-					ray.color.rgb = vec3(0);
+					ray.color = vec4(0);
 					traceRayEXT(tlas, 0, RENDERABLE_STANDARD_EXCEPT_WATER, 0/*rayType*/, 0/*nbRayTypes*/, 0/*missIndex*/, rayPosition, camera.zNear, rayDirection, maxRayDistance, 0);
 				RAY_RECURSION_POP
 				if (maxRayDistance == WATER_MAX_LIGHT_DEPTH) {
@@ -1368,7 +1410,7 @@ void main() {
 			vec3 rayDirection = gl_WorldRayDirectionEXT;
 			RAY_RECURSION_PUSH
 				RAY_UNDERWATER_PUSH
-					ray.color.rgb = vec3(0);
+					ray.color = vec4(0);
 					traceRayEXT(tlas, 0, RENDERABLE_STANDARD_EXCEPT_WATER, 0/*rayType*/, 0/*nbRayTypes*/, 0/*missIndex*/, rayPosition, camera.zNear, rayDirection, WATER_MAX_LIGHT_DEPTH, 0);
 				RAY_UNDERWATER_POP
 			RAY_RECURSION_POP
