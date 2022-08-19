@@ -571,10 +571,10 @@ void main() {
 	const float ambient = 0.6;
 	
 	const ivec2 COORDS = ivec2(gl_GlobalInvocationID);
-	const vec4 normalAndDistance = imageLoad(img_debug, COORDS);
-	const float dist = normalAndDistance.a;
-	const vec3 viewSpaceNormal = normalize(WORLD2VIEWNORMAL * normalAndDistance.xyz);
-	if (dist <= 0) return;
+	const vec4 normalAndSsaoStrength = imageLoad(img_debug, COORDS);
+	const float ssaoStrength = normalAndSsaoStrength.a;
+	const vec3 viewSpaceNormal = normalize(WORLD2VIEWNORMAL * normalAndSsaoStrength.xyz);
+	if (ssaoStrength == 0) return;
 	
 	uint seed = InitRandomSeed(uint(camera.frameIndex), InitRandomSeed(uint(COORDS.x), uint(COORDS.y)));
 	const vec2 uv = vec2(COORDS) / imageSize(img_depth);
@@ -593,7 +593,7 @@ void main() {
 			occluded += smoothstep(kernelSize*4, kernelSize, sampleDist - sampleDepthDist)*1.5;
 		}
 	}
-	float ssao = clamp(occluded / float(nbSamples), 0, 1) * clamp(smoothstep(maxDistance, maxDistance/5, -viewSpacePos.z), 0, 1);
+	float ssao = clamp(occluded / float(nbSamples), 0, 1) * clamp(smoothstep(maxDistance, maxDistance/5, -viewSpacePos.z), 0, 1) * clamp(ssaoStrength, 0, 1);
 	
 	vec4 composite = imageLoad(img_composite, COORDS);
 	imageStore(img_composite, COORDS, vec4(composite.rgb * mix(1.0, ambient, ssao), composite.a));

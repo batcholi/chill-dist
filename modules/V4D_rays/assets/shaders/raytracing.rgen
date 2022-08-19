@@ -1091,7 +1091,7 @@ float SimplexFractal(vec3 pos, int octaves) {
 #define WATER_MAX_LIGHT_DEPTH 32
 #define WATER_IOR 1.33
 #define WATER_OPACITY 0.5
-#define WATER_TINT vec3(0.2,0.5,0.9)
+#define WATER_TINT vec3(0.2,0.5,1.0)
 #define WATER_LIGHT (WATER_TINT * renderer.skyLightColor)
 #line 5 "/home/olivier/projects/chill/src/v4d/modules/V4D_rays/assets/shaders/raytracing.glsl"
 
@@ -1252,6 +1252,11 @@ void main() {
 	vec3 motion;
 	float depth;
 
+	bool rayIsUnderwater = RAY_IS_UNDERWATER;
+	if (rayIsUnderwater && ray.hitDistance >= WATER_MAX_LIGHT_DEPTH) {
+		hitSomething = false;
+	}
+	
 	// Aim
 	if (isMiddleOfScreen) {
 		renderer.aim.localPosition = ray.localPosition;
@@ -1300,7 +1305,8 @@ void main() {
 	
 	switch (camera.debugViewMode) {
 		case RENDERER_DEBUG_MODE_NONE:
-			imageStore(img_debug, COORDS, vec4(ray.normal, ray.hitDistance));
+			float ssaoStrength = rayIsUnderwater? (1-clamp(ray.hitDistance/WATER_MAX_LIGHT_DEPTH, 0, 1)) : 1;
+			imageStore(img_debug, COORDS, vec4(ray.normal, ssaoStrength));
 			break;
 		case RENDERER_DEBUG_MODE_NORMALS:
 			imageStore(img_debug, COORDS, vec4(normalize(WORLD2VIEWNORMAL * ray.normal), 1));

@@ -1091,7 +1091,7 @@ float SimplexFractal(vec3 pos, int octaves) {
 #define WATER_MAX_LIGHT_DEPTH 32
 #define WATER_IOR 1.33
 #define WATER_OPACITY 0.5
-#define WATER_TINT vec3(0.2,0.5,0.9)
+#define WATER_TINT vec3(0.2,0.5,1.0)
 #define WATER_LIGHT (WATER_TINT * renderer.skyLightColor)
 #line 5 "/home/olivier/projects/chill/src/v4d/modules/V4D_rays/assets/shaders/raytracing.glsl"
 
@@ -1230,19 +1230,7 @@ float sdfSphere(vec3 p, float r) {
 }
 
 
-#line 808 "/home/olivier/projects/chill/src/v4d/modules/V4D_rays/assets/shaders/raytracing.glsl"
-
-void ApplyUnderwaterFog() {
-	const vec3 origin = gl_WorldRayOriginEXT;
-	const vec3 dir = gl_WorldRayDirectionEXT;
-	const float distFactor = clamp(ray.hitDistance / WATER_MAX_LIGHT_DEPTH, 0 ,1);
-	const float fogStrength = max(WATER_OPACITY, pow(distFactor, 0.25));
-	const vec3 fogColor = WATER_LIGHT;
-
-	ray.color.rgb = mix(ray.color.rgb, vec3(0), pow(clamp(ray.hitDistance / WATER_MAX_LIGHT_DEPTH, 0, 1), 0.5));
-	ray.color.rgb = min(mix(normalize(fogColor), ray.color.rgb, 0.999), mix(ray.color.rgb, fogColor, fogStrength));
-}
-
+#line 814 "/home/olivier/projects/chill/src/v4d/modules/V4D_rays/assets/shaders/raytracing.glsl"
 
 #define RAIN_DROP_HASHSCALE1 .1031
 #define RAIN_DROP_HASHSCALE3 vec3(.1031, .1030, .0973)
@@ -1364,11 +1352,14 @@ void main() {
 	} else {
 		// Underwater
 		
-		if (dot(gl_WorldRayDirectionEXT, vec3(0,1,0)) > 0) {
+		float dotUp = dot(gl_WorldRayDirectionEXT, vec3(0,1,0));
+		float maxLightDepth = mix(WATER_MAX_LIGHT_DEPTH, 64, max(0, dotUp));
+		
+		if (dotUp > 0) {
 			// Looking up towards surface
 
 			float underwaterDepth = AABB_MAX.y - localPosition.y;
-			float distanceToSurface = clamp(min(underwaterDepth/max(0.001, dot(gl_WorldRayDirectionEXT, vec3(0,1,0))), camera.zFar), camera.zNear, WATER_MAX_LIGHT_DEPTH);
+			float distanceToSurface = clamp(underwaterDepth/dotUp, camera.zNear, camera.zFar);
 			vec3 surfaceNormal = vec3(0,-1,0);
 			vec3 wavePosition = gl_WorldRayOriginEXT + gl_WorldRayDirectionEXT * distanceToSurface;
 			if (waterWavesStrength > 0) APPLY_NORMAL_BUMP_NOISE(WaterWaves, wavePosition, surfaceNormal, waterWavesStrength * 0.05)
@@ -1388,23 +1379,26 @@ void main() {
 				rayPosition += rayDirection * distanceToSurface;
 				float maxRayDistance = camera.zFar;
 				if (!Refract(rayDirection, surfaceNormal, 1.0 / WATER_IOR)) {
-					maxRayDistance = WATER_MAX_LIGHT_DEPTH;
+					maxRayDistance = maxLightDepth;
 				}
 				RAY_RECURSION_PUSH
 					ray.color = vec4(0);
 					traceRayEXT(tlas, 0, RENDERABLE_STANDARD_EXCEPT_WATER, 0/*rayType*/, 0/*nbRayTypes*/, 0/*missIndex*/, rayPosition, camera.zNear, rayDirection, maxRayDistance, 0);
 				RAY_RECURSION_POP
-				if (maxRayDistance == WATER_MAX_LIGHT_DEPTH) {
+				if (maxRayDistance == maxLightDepth) {
 					if (ray.hitDistance == -1) {
-						ray.hitDistance = WATER_MAX_LIGHT_DEPTH;
+						ray.hitDistance = maxLightDepth;
 					}
-					ray.color.rgb *= pow(1.0 - clamp(ray.hitDistance / WATER_MAX_LIGHT_DEPTH, 0, 1), 2);
+					ray.color.rgb *= pow(1.0 - clamp(ray.hitDistance / maxLightDepth, 0, 1), 2);
 				}
 				ray.hitDistance = distanceToSurface;
 				ray.normal = vec3(0,-1,0);
+				SetHitWater();
+				ray.renderableIndex = -1;
 			}
-			ray.color.rgb *= WATER_TINT * pow(1.0 - clamp(ray.hitDistance / WATER_MAX_LIGHT_DEPTH, 0, 1), 2);
-		
+			float falloff = pow(1.0 - clamp(ray.hitDistance / maxLightDepth, 0, 1), 2);
+			ray.color.rgb *= WATER_TINT * falloff;
+			
 		} else {
 			// See through water (underwater looking down)
 			
@@ -1417,16 +1411,26 @@ void main() {
 				RAY_UNDERWATER_POP
 			RAY_RECURSION_POP
 			if (ray.hitDistance == -1) {
-				ray.hitDistance = WATER_MAX_LIGHT_DEPTH;
+				ray.hitDistance = maxLightDepth;
 				ray.color = vec4(0,0,0,1);
-				ray.normal = vec3(0,1,0);
+				ray.normal = vec3(0);
 				SetHitWater();
 			} else {
-				ray.color.rgb *= WATER_TINT * pow(1-clamp(ray.hitDistance / WATER_MAX_LIGHT_DEPTH, 0, 1), 2);
+				float falloff = pow(1.0 - clamp(ray.hitDistance / maxLightDepth, 0, 1), 2);
+				ray.color.rgb *= WATER_TINT * falloff;
 			}
 			
 		}
 		
-		ApplyUnderwaterFog();
+		// Fog
+		const vec3 origin = gl_WorldRayOriginEXT;
+		const vec3 dir = gl_WorldRayDirectionEXT;
+		const float distFactor = clamp(ray.hitDistance / maxLightDepth, 0 ,1);
+		const float fogStrength = max(WATER_OPACITY, pow(distFactor, 0.25));
+		const vec3 fogColor = WATER_LIGHT;
+		ray.color.rgb = mix(ray.color.rgb, vec3(0), pow(clamp(ray.hitDistance / maxLightDepth, 0, 1), 0.5));
+		ray.color.rgb = min(mix(normalize(fogColor), ray.color.rgb, 0.999), mix(ray.color.rgb, fogColor, fogStrength));
+		
+		RAY_UNDERWATER_PUSH
 	}
 }

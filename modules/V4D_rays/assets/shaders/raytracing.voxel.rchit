@@ -1091,7 +1091,7 @@ float SimplexFractal(vec3 pos, int octaves) {
 #define WATER_MAX_LIGHT_DEPTH 32
 #define WATER_IOR 1.33
 #define WATER_OPACITY 0.5
-#define WATER_TINT vec3(0.2,0.5,0.9)
+#define WATER_TINT vec3(0.2,0.5,1.0)
 #define WATER_LIGHT (WATER_TINT * renderer.skyLightColor)
 #line 5 "/home/olivier/projects/chill/src/v4d/modules/V4D_rays/assets/shaders/raytracing.glsl"
 
@@ -1230,7 +1230,7 @@ float sdfSphere(vec3 p, float r) {
 }
 
 
-#line 456 "/home/olivier/projects/chill/src/v4d/modules/V4D_rays/assets/shaders/raytracing.glsl"
+#line 462 "/home/olivier/projects/chill/src/v4d/modules/V4D_rays/assets/shaders/raytracing.glsl"
 
 hitAttributeEXT VOXEL_INDEX_TYPE voxelIndex;
 
@@ -1562,5 +1562,5 @@ void main() {
 	}
 }
 
-#line 788 "/home/olivier/projects/chill/src/v4d/modules/V4D_rays/assets/shaders/raytracing.glsl"
+#line 794 "/home/olivier/projects/chill/src/v4d/modules/V4D_rays/assets/shaders/raytracing.glsl"
 
