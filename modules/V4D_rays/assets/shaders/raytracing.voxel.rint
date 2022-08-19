@@ -638,7 +638,8 @@ struct RendererData {
 	aligned_i32vec3 worldOrigin;
 	aligned_uint32_t globalIlluminationTableCount;
 	aligned_float64_t timestamp;
-	aligned_float64_t _unused_3;
+	aligned_int32_t _unused_1;
+	aligned_int32_t _unused_2;
 };
 STATIC_ASSERT_ALIGNED16_SIZE(RendererData, 112);
 #line 2 "/home/olivier/projects/chill/src/v4d/modules/V4D_rays/assets/shaders/raytracing.glsl"
@@ -1090,7 +1091,8 @@ float SimplexFractal(vec3 pos, int octaves) {
 #define WATER_MAX_LIGHT_DEPTH 32
 #define WATER_IOR 1.33
 #define WATER_OPACITY 0.5
-#define WATER_COLOR (vec3(0.3,0.5,0.8) * renderer.skyLightColor)
+#define WATER_TINT vec3(0.2,0.5,0.9)
+#define WATER_LIGHT (WATER_TINT * renderer.skyLightColor)
 #line 5 "/home/olivier/projects/chill/src/v4d/modules/V4D_rays/assets/shaders/raytracing.glsl"
 
 layout(set = 1, binding = SET1_BINDING_TLAS) uniform accelerationStructureEXT tlas;
@@ -1168,7 +1170,7 @@ uint seed = InitRandomSeed(InitRandomSeed(gl_LaunchIDEXT.x, gl_LaunchIDEXT.y), u
 uint coherentSeed = InitRandomSeed(uint(camera.frameIndex),0);
 CameraData cam = cameras[pushConstant.cameraIndex];
 
-#define MAX_GI_ACCUMULATION 256
+#define MAX_GI_ACCUMULATION 400
 #define ACCUMULATOR_MAX_FRAME_INDEX_DIFF 500
 
 uint HashGlobalPosition(uvec3 data) {
@@ -1228,7 +1230,7 @@ float sdfSphere(vec3 p, float r) {
 }
 
 
-#line 294 "/home/olivier/projects/chill/src/v4d/modules/V4D_rays/assets/shaders/raytracing.glsl"
+#line 295 "/home/olivier/projects/chill/src/v4d/modules/V4D_rays/assets/shaders/raytracing.glsl"
 // void main() {
 // 	COMPUTE_BOX_INTERSECTION
 // 	if (T1 < T2 && T2 > 0) {

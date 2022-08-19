@@ -638,7 +638,8 @@ struct RendererData {
 	aligned_i32vec3 worldOrigin;
 	aligned_uint32_t globalIlluminationTableCount;
 	aligned_float64_t timestamp;
-	aligned_float64_t _unused_3;
+	aligned_int32_t _unused_1;
+	aligned_int32_t _unused_2;
 };
 STATIC_ASSERT_ALIGNED16_SIZE(RendererData, 112);
 #line 2 "/home/olivier/projects/chill/src/v4d/modules/V4D_rays/assets/shaders/raytracing.glsl"
@@ -1090,7 +1091,8 @@ float SimplexFractal(vec3 pos, int octaves) {
 #define WATER_MAX_LIGHT_DEPTH 32
 #define WATER_IOR 1.33
 #define WATER_OPACITY 0.5
-#define WATER_COLOR (vec3(0.3,0.5,0.8) * renderer.skyLightColor)
+#define WATER_TINT vec3(0.2,0.5,0.9)
+#define WATER_LIGHT (WATER_TINT * renderer.skyLightColor)
 #line 5 "/home/olivier/projects/chill/src/v4d/modules/V4D_rays/assets/shaders/raytracing.glsl"
 
 layout(set = 1, binding = SET1_BINDING_TLAS) uniform accelerationStructureEXT tlas;
@@ -1168,7 +1170,7 @@ uint seed = InitRandomSeed(InitRandomSeed(gl_LaunchIDEXT.x, gl_LaunchIDEXT.y), u
 uint coherentSeed = InitRandomSeed(uint(camera.frameIndex),0);
 CameraData cam = cameras[pushConstant.cameraIndex];
 
-#define MAX_GI_ACCUMULATION 256
+#define MAX_GI_ACCUMULATION 400
 #define ACCUMULATOR_MAX_FRAME_INDEX_DIFF 500
 
 uint HashGlobalPosition(uvec3 data) {
@@ -1230,7 +1232,8 @@ float sdfSphere(vec3 p, float r) {
 
 #line 263 "/home/olivier/projects/chill/src/v4d/modules/V4D_rays/assets/shaders/raytracing.glsl"
 void main() {
-	ray.color = vec4(renderer.skyLightColor * (RAY_IS_GI? vec3(0.75,0.9,1.3) : vec3(0.5,0.6,1.5)), 1);
+	bool rayIsGi = RAY_IS_GI;
+	ray.color = vec4(renderer.skyLightColor * (rayIsGi? vec3(0.75,0.9,1.3) : vec3(0.5,0.6,1.5)), 1);
 	ray.normal = vec3(0);
 	ray.hitDistance = -1;
 	ray.id = -1;
@@ -1247,12 +1250,12 @@ void main() {
 	const float sunSolidAngle = 0.0003;
 	ray.color.rgb += ray.color.rgb * pow(smoothstep(0.5, 1, dot(gl_WorldRayDirectionEXT, renderer.sunDir)), 2);
 	ray.color.rgb += ray.color.rgb * pow(smoothstep(1-sunGlowAngle, 1.002, dot(gl_WorldRayDirectionEXT, renderer.sunDir)), 2) * 0.5;
-	ray.color.rgb += sunColor * 0.5 * smoothstep(1-sunSolidAngle, 1, dot(gl_WorldRayDirectionEXT, renderer.sunDir)) * 100;
+	if (!rayIsGi) ray.color.rgb += sunColor * 0.5 * smoothstep(1-sunSolidAngle, 1, dot(gl_WorldRayDirectionEXT, renderer.sunDir)) * 100;
 	// MOON
 	const float moonSolidAngle = 0.0005;
 	const vec3 moonRelPos = -renderer.sunDir - gl_WorldRayDirectionEXT;
 	ray.color.rgb += pow(smoothstep(1-moonSolidAngle, 1, dot(gl_WorldRayDirectionEXT, -renderer.sunDir)), 0.25) * pow(SimplexFractal(moonRelPos*32+2.516, 3)*0.4+0.5, 1.5);
 	// Sunset
-	ray.color.rgb += sunColor * sunset * pow(clamp(dot(gl_WorldRayDirectionEXT, renderer.sunDir), 0, 1), 2) * pow(1-abs(dot(gl_WorldRayDirectionEXT, vec3(0,1,0))), 4);
+	if (!rayIsGi) ray.color.rgb += sunColor * sunset * pow(clamp(dot(gl_WorldRayDirectionEXT, renderer.sunDir), 0, 1), 2) * pow(1-abs(dot(gl_WorldRayDirectionEXT, vec3(0,1,0))), 4);
 }
 
