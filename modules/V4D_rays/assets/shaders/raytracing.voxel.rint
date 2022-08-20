@@ -1108,7 +1108,7 @@ struct RayPayload {
 	vec3 normal;
 	float _unused1;
 	vec3 localPosition;
-	float _unused2;
+	float t2;
 	vec3 worldPosition;
 	float hitDistance;
 	int id;
@@ -1128,6 +1128,7 @@ ivec2 COORDS = ivec2(gl_LaunchIDEXT.xy);
 
 uint64_t startTime = clockARB();
 #define WRITE_DEBUG_TIME {float elapsedTime = imageLoad(img_debug, COORDS).a + float(clockARB() - startTime); imageStore(img_debug, COORDS, vec4(0,0,0, elapsedTime));}
+#define DEBUG_RAY_INT_TIME {if (camera.debugViewMode == RENDERER_DEBUG_MODE_RAYINT_TIME) WRITE_DEBUG_TIME}
 const float EPSILON = 0.00001;
 #define traceRayEXT {if (camera.debugViewMode == RENDERER_DEBUG_MODE_TRACE_RAY_COUNT) imageStore(img_debug, COORDS, imageLoad(img_debug, COORDS) + uvec4(0,0,0,1));} traceRayEXT
 #define DEBUG_TEST(color) {if (camera.debugViewMode == RENDERER_DEBUG_MODE_TEST) imageStore(img_debug, COORDS, color);}
@@ -1230,7 +1231,7 @@ float sdfSphere(vec3 p, float r) {
 }
 
 
-#line 301 "/home/olivier/projects/chill/src/v4d/modules/V4D_rays/assets/shaders/raytracing.glsl"
+#line 304 "/home/olivier/projects/chill/src/v4d/modules/V4D_rays/assets/shaders/raytracing.glsl"
 // void main() {
 // 	COMPUTE_BOX_INTERSECTION
 // 	if (T1 < T2 && T2 > 0) {
@@ -1240,7 +1241,10 @@ float sdfSphere(vec3 p, float r) {
 // 		if (imageLoad(rtPayloadImage, COORDS).r == 0) WRITE_DEBUG_TIME
 // 	}
 // }
-hitAttributeEXT VOXEL_INDEX_TYPE voxelIndex;
+hitAttributeEXT hit {
+	float t2;
+	VOXEL_INDEX_TYPE voxelIndex;
+};
 bool IsValidVoxel(in ivec3 iPos, in vec3 gridOffset) {
 	if (iPos.x < 0 || iPos.y < 0 || iPos.z < 0) return false;
 	if (iPos.x >= VOXELS_X || iPos.y >= VOXELS_Y || iPos.z >= VOXELS_Z) return false;
@@ -1265,57 +1269,61 @@ void NextStepDDA(inout bvec3 bNormalMask, inout ivec3 iPos, inout vec3 travelDis
 void ReportIntersection(in vec3 pos, in vec3 rayOrigin, in vec3 rayDir, in bvec3 bNormalMask, in ivec3 iStepDir, in float voxelSize) {
 	// Compute actual T
 	
-	
 	if (voxelSize == 1) {
-		const vec3 tmin = min((pos - rayOrigin) / rayDir, (pos + voxelSize - rayOrigin) / rayDir);
-		const float T = max(gl_RayTminEXT, max(tmin.x, max(tmin.y, tmin.z)));
+		const vec3 tbot = (pos + voxelSize - rayOrigin) / rayDir;
+		const vec3 ttop = (pos - rayOrigin) / rayDir;
+		const vec3 tmin = min(ttop, tbot);
+		const vec3 tmax = max(ttop, tbot);
+		const float t1 = max(gl_RayTminEXT, max(tmin.x, max(tmin.y, tmin.z)));
+		t2 = min(tmax.x, min(tmax.y, tmax.z));
 		// Store Normal Index in gl_HitKindEXT
 		uint8_t normalIndex = uint8_t(
 			int(bNormalMask.x) * (3 - 3 * max(0, iStepDir.x))
 			+ int(bNormalMask.y) * (4 - 3 * max(0, iStepDir.y))
 			+ int(bNormalMask.z) * (5 - 3 * max(0, iStepDir.z))
 		);
-		reportIntersectionEXT(T, normalIndex);
+		reportIntersectionEXT(t1, normalIndex);
 	} else {
-		const vec3 _tbot = (pos + voxelSize - rayOrigin) / rayDir;
-		const vec3 _ttop = (pos - rayOrigin) / rayDir;
-		const vec3 _tmin = min(_ttop, _tbot);
-		const vec3 _tmax = max(_ttop, _tbot);
-		const float T1 = max(_tmin.x, max(_tmin.y, _tmin.z));
-		const float T2 = min(_tmax.x, min(_tmax.y, _tmax.z));
+		const vec3 tbot = (pos + voxelSize - rayOrigin) / rayDir;
+		const vec3 ttop = (pos - rayOrigin) / rayDir;
+		const vec3 tmin = min(ttop, tbot);
+		const vec3 tmax = max(ttop, tbot);
+		const float t1 = max(tmin.x, max(tmin.y, tmin.z));
+		t2 = min(tmax.x, min(tmax.y, tmax.z));
 		uint8_t normalIndex = uint8_t(
 			int(bNormalMask.x) * (3 - 3 * max(0, iStepDir.x))
 			+ int(bNormalMask.y) * (4 - 3 * max(0, iStepDir.y))
 			+ int(bNormalMask.z) * (5 - 3 * max(0, iStepDir.z))
 		);
-		if (T1 > gl_RayTminEXT) {
+		if (t1 > gl_RayTminEXT) {
 			// Exterior
-			reportIntersectionEXT(T1, normalIndex);
+			reportIntersectionEXT(t1, normalIndex);
 		} else {
 			// Interior
-			reportIntersectionEXT(T2, normalIndex);
+			reportIntersectionEXT(t2, normalIndex);
 		}
 	}
-	
-	
-	if (camera.debugViewMode == RENDERER_DEBUG_MODE_RAYINT_TIME) WRITE_DEBUG_TIME
-}
-void ReportIntersection(in float t, in uint8_t normalIndex) {
-	reportIntersectionEXT(t, normalIndex);
-	if (camera.debugViewMode == RENDERER_DEBUG_MODE_RAYINT_TIME) WRITE_DEBUG_TIME
 }
 const int maxIterations_hd = VOXEL_GRID_SIZE_HD * 3 + 1;
 const float maxHdVoxelDistance = 100;
 void main() {
-	if (AABB.extra == 0) return;
+	if (AABB.extra == 0) {
+		DEBUG_RAY_INT_TIME
+		return;
+	}
 	ChunkData chunk = ChunkData(AABB.extra);
-	if (uint64_t(chunk.voxels) == 0) return;
+	if (uint64_t(chunk.voxels) == 0) {
+		DEBUG_RAY_INT_TIME
+		return;
+	}
 	COMPUTE_BOX_INTERSECTION // retrieves T1 and T2
 	if (T1 < T2 && T2 > 0) {
 		bool rayIsGi = RAY_IS_GI;
 		ChunkVoxelData voxelData = chunk.voxels;
-		if (voxelData.voxelSize == 0) return;
-		
+		if (voxelData.voxelSize == 0) {
+			DEBUG_RAY_INT_TIME
+			return;
+		}
 		const float startT = max(gl_RayTminEXT, T1 - EPSILON * voxelData.voxelSize * 10);
 		const float endT   = min(gl_RayTmaxEXT, T2 + EPSILON * voxelData.voxelSize * 10);
 		const bool enableHdVoxels = voxelData.voxelSize == 1 && startT < maxHdVoxelDistance && !rayIsGi;
@@ -1340,6 +1348,7 @@ void main() {
 				if (fill != VOXEL_EMPTY) {
 					if (fill == VOXEL_FULL || !enableHdVoxels) {
 						ReportIntersection(vec3(iPos) * voxelData.voxelSize, rayOrigin, rayDir, bNormalMask, iStepDir, voxelData.voxelSize);
+						DEBUG_RAY_INT_TIME
 						return;
 					} else {
 						
@@ -1355,6 +1364,7 @@ void main() {
 								const float theshold = 0.5 - thickness;
 								if (step(theshold, distFromCenter.x) + step(theshold, distFromCenter.y) + step(theshold, distFromCenter.z) > 1) {
 									ReportIntersection(vec3(iPos) * voxelData.voxelSize, rayOrigin, rayDir, bNormalMask, iStepDir, voxelData.voxelSize);
+									DEBUG_RAY_INT_TIME
 									return;
 								}
 							}
@@ -1372,6 +1382,7 @@ void main() {
 							if (IsValidVoxelHD(iPos_hd)) {
 								if ((fill & VoxelFillBitHD(iPos_hd)) != 0) {
 									ReportIntersection((vec3(iPos_hd)/VOXEL_GRID_SIZE_HD + vec3(iPos)), rayOrigin, rayDir, bNormalMask_hd, iStepDir, 1.0/VOXEL_GRID_SIZE_HD);
+									DEBUG_RAY_INT_TIME
 									return;
 								}
 							}
@@ -1386,8 +1397,13 @@ void main() {
 			// Fast DDA
 			NextStepDDA(bNormalMask, iPos, travelDist, iStepDir, stepSize);
 			// Early Exit when out of bounds
-			if (iPos.x == iOutOfBound.x || iPos.y == iOutOfBound.y || iPos.z == iOutOfBound.z) return;
+			if (iPos.x == iOutOfBound.x || iPos.y == iOutOfBound.y || iPos.z == iOutOfBound.z) {
+				DEBUG_RAY_INT_TIME
+				return;
+			}
 		}
 	}
+	
+	DEBUG_RAY_INT_TIME
 }
 

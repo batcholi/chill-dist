@@ -1108,7 +1108,7 @@ struct RayPayload {
 	vec3 normal;
 	float _unused1;
 	vec3 localPosition;
-	float _unused2;
+	float t2;
 	vec3 worldPosition;
 	float hitDistance;
 	int id;
@@ -1128,6 +1128,7 @@ ivec2 COORDS = ivec2(gl_LaunchIDEXT.xy);
 
 uint64_t startTime = clockARB();
 #define WRITE_DEBUG_TIME {float elapsedTime = imageLoad(img_debug, COORDS).a + float(clockARB() - startTime); imageStore(img_debug, COORDS, vec4(0,0,0, elapsedTime));}
+#define DEBUG_RAY_INT_TIME {if (camera.debugViewMode == RENDERER_DEBUG_MODE_RAYINT_TIME) WRITE_DEBUG_TIME}
 const float EPSILON = 0.00001;
 #define traceRayEXT {if (camera.debugViewMode == RENDERER_DEBUG_MODE_TRACE_RAY_COUNT) imageStore(img_debug, COORDS, imageLoad(img_debug, COORDS) + uvec4(0,0,0,1));} traceRayEXT
 #define DEBUG_TEST(color) {if (camera.debugViewMode == RENDERER_DEBUG_MODE_TEST) imageStore(img_debug, COORDS, color);}
@@ -1230,7 +1231,7 @@ float sdfSphere(vec3 p, float r) {
 }
 
 
-#line 814 "/home/olivier/projects/chill/src/v4d/modules/V4D_rays/assets/shaders/raytracing.glsl"
+#line 862 "/home/olivier/projects/chill/src/v4d/modules/V4D_rays/assets/shaders/raytracing.glsl"
 
 #define RAIN_DROP_HASHSCALE1 .1031
 #define RAIN_DROP_HASHSCALE3 vec3(.1031, .1030, .0973)
@@ -1290,12 +1291,13 @@ void SetHitWater() {
 }
 
 void main() {
+	uint recursions = RAY_RECURSIONS;
 	
 	ray.hitDistance = gl_HitTEXT;
 	ray.normal = vec3(0,1,0);
 	ray.color = vec4(vec3(0), 1);
 	
-	if (RAY_RECURSIONS >= RAY_MAX_RECURSION) {
+	if (recursions >= RAY_MAX_RECURSION) {
 		ray.id = -1;
 		ray.renderableIndex = -1;
 		return;
@@ -1432,6 +1434,11 @@ void main() {
 		ray.color.rgb = min(mix(normalize(fogColor), ray.color.rgb, 0.999), mix(ray.color.rgb, fogColor, fogStrength));
 		
 		RAY_UNDERWATER_PUSH
+	}
+	
+	// Debug Time
+	if (camera.debugViewMode == RENDERER_DEBUG_MODE_RAYHIT_TIME) {
+		if (recursions == 0) WRITE_DEBUG_TIME
 	}
 }
 

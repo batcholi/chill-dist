@@ -1108,7 +1108,7 @@ struct RayPayload {
 	vec3 normal;
 	float _unused1;
 	vec3 localPosition;
-	float _unused2;
+	float t2;
 	vec3 worldPosition;
 	float hitDistance;
 	int id;
@@ -1128,6 +1128,7 @@ ivec2 COORDS = ivec2(gl_LaunchIDEXT.xy);
 
 uint64_t startTime = clockARB();
 #define WRITE_DEBUG_TIME {float elapsedTime = imageLoad(img_debug, COORDS).a + float(clockARB() - startTime); imageStore(img_debug, COORDS, vec4(0,0,0, elapsedTime));}
+#define DEBUG_RAY_INT_TIME {if (camera.debugViewMode == RENDERER_DEBUG_MODE_RAYINT_TIME) WRITE_DEBUG_TIME}
 const float EPSILON = 0.00001;
 #define traceRayEXT {if (camera.debugViewMode == RENDERER_DEBUG_MODE_TRACE_RAY_COUNT) imageStore(img_debug, COORDS, imageLoad(img_debug, COORDS) + uvec4(0,0,0,1));} traceRayEXT
 #define DEBUG_TEST(color) {if (camera.debugViewMode == RENDERER_DEBUG_MODE_TEST) imageStore(img_debug, COORDS, color);}
@@ -1230,7 +1231,7 @@ float sdfSphere(vec3 p, float r) {
 }
 
 
-#line 269 "/home/olivier/projects/chill/src/v4d/modules/V4D_rays/assets/shaders/raytracing.glsl"
+#line 272 "/home/olivier/projects/chill/src/v4d/modules/V4D_rays/assets/shaders/raytracing.glsl"
 void main() {
 	bool rayIsGi = RAY_IS_GI;
 	ray.color = vec4(renderer.skyLightColor * (rayIsGi? vec3(0.75,0.9,1.3) : vec3(0.5,0.6,1.5)), 1);

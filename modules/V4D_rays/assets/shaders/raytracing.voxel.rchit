@@ -1108,7 +1108,7 @@ struct RayPayload {
 	vec3 normal;
 	float _unused1;
 	vec3 localPosition;
-	float _unused2;
+	float t2;
 	vec3 worldPosition;
 	float hitDistance;
 	int id;
@@ -1128,6 +1128,7 @@ ivec2 COORDS = ivec2(gl_LaunchIDEXT.xy);
 
 uint64_t startTime = clockARB();
 #define WRITE_DEBUG_TIME {float elapsedTime = imageLoad(img_debug, COORDS).a + float(clockARB() - startTime); imageStore(img_debug, COORDS, vec4(0,0,0, elapsedTime));}
+#define DEBUG_RAY_INT_TIME {if (camera.debugViewMode == RENDERER_DEBUG_MODE_RAYINT_TIME) WRITE_DEBUG_TIME}
 const float EPSILON = 0.00001;
 #define traceRayEXT {if (camera.debugViewMode == RENDERER_DEBUG_MODE_TRACE_RAY_COUNT) imageStore(img_debug, COORDS, imageLoad(img_debug, COORDS) + uvec4(0,0,0,1));} traceRayEXT
 #define DEBUG_TEST(color) {if (camera.debugViewMode == RENDERER_DEBUG_MODE_TEST) imageStore(img_debug, COORDS, color);}
@@ -1230,9 +1231,12 @@ float sdfSphere(vec3 p, float r) {
 }
 
 
-#line 462 "/home/olivier/projects/chill/src/v4d/modules/V4D_rays/assets/shaders/raytracing.glsl"
+#line 480 "/home/olivier/projects/chill/src/v4d/modules/V4D_rays/assets/shaders/raytracing.glsl"
 
-hitAttributeEXT VOXEL_INDEX_TYPE voxelIndex;
+hitAttributeEXT hit {
+	float t2;
+	VOXEL_INDEX_TYPE voxelIndex;
+};
 
 const vec3[7] BOX_NORMAL_DIRS = {
 	vec3(-1,0,0),
@@ -1335,10 +1339,6 @@ void main() {
 	ray.renderableIndex = -1;
 	
 	bool rayIsShadow = RAY_IS_SHADOW;
-	if (rayIsShadow) {
-		ray.hitDistance = 0;
-		return;
-	}
 	uint recursions = RAY_RECURSIONS;
 	bool rayIsGi = RAY_IS_GI;
 	bool rayIsUnderWater = RAY_IS_UNDERWATER;
@@ -1386,6 +1386,19 @@ void main() {
 	// if (OPTION_TEXTURES) {
 		executeCallableEXT(voxelData.type[voxelIndex], VOXEL_SURFACE_CALLABLE);
 	// }
+	
+	if (rayIsShadow) {
+		if (surface.color.a > 0.95) {
+			ray.hitDistance = 0;
+			ray.color.a = 1;
+		} else {
+			ray.color = surface.color;
+			ray.hitDistance = gl_HitTEXT;
+			ray.renderableIndex = -1;
+			ray.t2 = t2;
+		}
+		return;
+	}
 	
 	VoxelSurface thisSurface = surface;
 	float fresnel = Fresnel((camera.viewMatrix * vec4(worldPosition, 1)).xyz, normalize(WORLD2VIEWNORMAL * thisSurface.normal), thisSurface.ior);
@@ -1450,29 +1463,40 @@ void main() {
 			ray.color = vec4(0);
 			vec3 sunDir = normalize(renderer.sunDir);
 			float nDotL = dot(thisSurface.normal, sunDir);
+			vec3 directSunLight = vec3(0);
 			if (nDotL > 0) {
+				float shadowRayStart = camera.zNear;
 				RAY_RECURSION_PUSH
 					RAY_SHADOW_PUSH
-						traceRayEXT(tlas, 0, RENDERABLE_STANDARD_EXCEPT_WATER, 0/*rayType*/, 0/*nbRayTypes*/, 0/*missIndex*/, rayOrigin, cam.zNear, sunDir, cam.zFar, 0);
+						vec3 colorFilter = vec3(1);
+						float opacity = 0;
+						const float MAX_SHADOW_TRANSPARENCY_RAYS = 2;
+						for (int i = 0; i < MAX_SHADOW_TRANSPARENCY_RAYS; ++i) {
+							traceRayEXT(tlas, 0, RENDERABLE_STANDARD_EXCEPT_WATER, 0/*rayType*/, 0/*nbRayTypes*/, 0/*missIndex*/, rayOrigin, shadowRayStart, sunDir, cam.zFar, 0);
+							if (ray.hitDistance == -1) {
+								// lit
+								if (rayIsUnderWater) {
+									directSunLight = thisSurface.color.rgb * renderer.skyLightColor * pow(1-clamp((WATER_LEVEL - localPosition.y) / WATER_MAX_LIGHT_DEPTH, 0, 1), 4) * WATER_OPACITY;
+								} else {
+									if (rayIsGi) {
+										directSunLight = pow(thisSurface.color.rgb * ray.color.rgb, vec3(0.25)) * 0.5;
+									} else {
+										directSunLight = thisSurface.color.rgb * renderer.skyLightColor * nDotL;
+									}
+								}
+								directSunLight *= colorFilter * (1 - clamp(opacity,0,1));
+								break;
+							} else {
+								colorFilter *= ray.color.rgb;
+								opacity += max(0.05, ray.color.a);
+								shadowRayStart = max(ray.hitDistance, ray.t2) * 1.001;
+							}
+							if (opacity > 0.95) break;
+						}
 					RAY_SHADOW_POP
 				RAY_RECURSION_POP
-				if (ray.hitDistance == -1) {
-					// lit
-					if (rayIsUnderWater) {
-						ray.color.rgb = color + thisSurface.color.rgb * renderer.skyLightColor * pow(1-clamp((WATER_LEVEL - localPosition.y) / WATER_MAX_LIGHT_DEPTH, 0, 1), 4) * WATER_OPACITY;
-					} else {
-						if (rayIsGi) {
-							ray.color.rgb = pow(color + thisSurface.color.rgb * ray.color.rgb, vec3(0.25)) * 0.5;
-						} else {
-							ray.color.rgb = color + thisSurface.color.rgb * renderer.skyLightColor * nDotL;
-						}
-					}
-				} else {
-					ray.color.rgb = color;
-				}
-			} else {
-				ray.color.rgb = color;
 			}
+			ray.color.rgb = color + directSunLight;
 		}
 		
 		if (!rayIsGi) {
@@ -1498,13 +1522,13 @@ void main() {
 					const vec3  _tmax   = max(_ttop, _tbot);
 					const vec3  _tmin   = min(_ttop, _tbot);
 					const float t1      = max(_tmin.x, max(_tmin.y, _tmin.z));
-					const float t2      = min(_tmax.x, min(_tmax.y, _tmax.z));
-					vec3 t2Position = worldPosition + rayDirection * (t2 - t1);
+					const float refracted_t2      = min(_tmax.x, min(_tmax.y, _tmax.z));
+					vec3 t2Position = worldPosition + rayDirection * (refracted_t2 - t1);
 					if (Refract(rayDirection, thisSurface.normal, 1.0/thisSurface.ior)) {
 						RAY_RECURSION_PUSH
 							traceRayEXT(tlas, 0, RENDERABLE_STANDARD_EXCEPT_WATER, 0/*rayType*/, 0/*nbRayTypes*/, 0/*missIndex*/, t2Position, 0, rayDirection, cam.zFar, 0);
 						RAY_RECURSION_POP
-						ray.color.rgb *= 1-thisSurface.color.a;
+						ray.color.rgb *= thisSurface.color.rgb * (1-thisSurface.color.a);
 					}
 				}
 			}
@@ -1519,6 +1543,10 @@ void main() {
 	ray.primitiveIndex = gl_PrimitiveID;
 	ray.localPosition = localPosition;
 	ray.worldPosition = worldPosition;
+	ray.t2 = t2;
+	
+	// Opacity
+	ray.color.a = thisSurface.color.a;
 	
 	// Emission
 	ray.color.rgb += thisSurface.emission;
@@ -1562,5 +1590,5 @@ void main() {
 	}
 }
 
-#line 794 "/home/olivier/projects/chill/src/v4d/modules/V4D_rays/assets/shaders/raytracing.glsl"
+#line 839 "/home/olivier/projects/chill/src/v4d/modules/V4D_rays/assets/shaders/raytracing.glsl"
 
