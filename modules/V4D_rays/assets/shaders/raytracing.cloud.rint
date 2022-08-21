@@ -638,8 +638,8 @@ struct RendererData {
 	aligned_i32vec3 worldOrigin;
 	aligned_uint32_t globalIlluminationTableCount;
 	aligned_float64_t timestamp;
-	aligned_int32_t _unused_1;
-	aligned_int32_t _unused_2;
+	aligned_float32_t cloudDensity;
+	aligned_int32_t _unused;
 };
 STATIC_ASSERT_ALIGNED16_SIZE(RendererData, 112);
 #line 2 "/home/olivier/projects/chill/src/v4d/modules/V4D_rays/assets/shaders/raytracing.glsl"
@@ -1238,27 +1238,28 @@ hitAttributeEXT hit {
 };
 
 void main() {
-	COMPUTE_BOX_INTERSECTION
-	
-	float t1 = max(gl_RayTminEXT, T1);
-	vec3 start = gl_ObjectRayOriginEXT + gl_ObjectRayDirectionEXT * t1;
-	vec3 end = gl_ObjectRayOriginEXT + gl_ObjectRayDirectionEXT * T2;
-	
-	const int MAX_STEPS = 1;
-	const float speed = 0.05;
-	float density = 0;
-	for (int i = 0; i < MAX_STEPS; ++i) {
-		float t = 0.5;//RandomFloat(seed);// float(i) / MAX_STEPS;
-		float time = float(renderer.timestamp*speed);
-		vec3 pos = mix(start, end, t) * 0.001;
-		density += SimplexFractal(pos + vec3(time, time * 0.3, 0), 7);
+	if (renderer.cloudDensity > 0.1) {
+		COMPUTE_BOX_INTERSECTION
+		
+		float t1 = max(gl_RayTminEXT, T1);
+		t2 = t1+500;
+		vec3 start = gl_ObjectRayOriginEXT + gl_ObjectRayDirectionEXT * t1;
+		vec3 end = gl_ObjectRayOriginEXT + gl_ObjectRayDirectionEXT * t2;
+		
+		// const int MAX_STEPS = 1;
+		const float speed = 0.05;
+		float density = 0;
+		// for (int i = 0; i < MAX_STEPS; ++i) {
+			float time = float(renderer.timestamp*speed);
+			float t = 0.5;// (float(i)+0.5) / MAX_STEPS;
+			vec3 pos = mix(start, end, t) * 0.003;
+			density += SimplexFractal(pos + vec3(time, time * 0.3, 0), 3) + renderer.cloudDensity + 0.1;
+		// }
+		
+		if (density > (1-renderer.cloudDensity)) {
+			reportIntersectionEXT(t1, 0);
+		}
 	}
-	
-	if (density > 0) {
-		t2 = T2;
-		reportIntersectionEXT(t1, 0);
-	}
-	
 	if (camera.debugViewMode == RENDERER_DEBUG_MODE_RAYINT_TIME) WRITE_DEBUG_TIME
 }
 

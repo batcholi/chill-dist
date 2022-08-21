@@ -638,8 +638,8 @@ struct RendererData {
 	aligned_i32vec3 worldOrigin;
 	aligned_uint32_t globalIlluminationTableCount;
 	aligned_float64_t timestamp;
-	aligned_int32_t _unused_1;
-	aligned_int32_t _unused_2;
+	aligned_float32_t cloudDensity;
+	aligned_int32_t _unused;
 };
 STATIC_ASSERT_ALIGNED16_SIZE(RendererData, 112);
 #line 2 "/home/olivier/projects/chill/src/v4d/modules/V4D_rays/assets/shaders/raytracing.glsl"
@@ -1231,7 +1231,7 @@ float sdfSphere(vec3 p, float r) {
 }
 
 
-#line 1105 "/home/olivier/projects/chill/src/v4d/modules/V4D_rays/assets/shaders/raytracing.glsl"
+#line 1106 "/home/olivier/projects/chill/src/v4d/modules/V4D_rays/assets/shaders/raytracing.glsl"
 
 hitAttributeEXT hit {
 	float t2;
