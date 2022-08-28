@@ -1167,8 +1167,9 @@ const float EPSILON = 0.00001;
 #define WATER_INTERSECTION_UNDER 0
 #define WATER_INTERSECTION_ABOVE 1
 
-uint seed = InitRandomSeed(InitRandomSeed(gl_LaunchIDEXT.x, gl_LaunchIDEXT.y), uint(camera.frameIndex));
+uint stableSeed = InitRandomSeed(gl_LaunchIDEXT.x, gl_LaunchIDEXT.y);
 uint coherentSeed = InitRandomSeed(uint(camera.frameIndex),0);
+uint seed = InitRandomSeed(stableSeed, coherentSeed);
 CameraData cam = cameras[pushConstant.cameraIndex];
 
 #define MAX_GI_ACCUMULATION 400
@@ -1231,7 +1232,7 @@ float sdfSphere(vec3 p, float r) {
 }
 
 
-#line 862 "/home/olivier/projects/chill/src/v4d/modules/V4D_rays/assets/shaders/raytracing.glsl"
+#line 906 "/home/olivier/projects/chill/src/v4d/modules/V4D_rays/assets/shaders/raytracing.glsl"
 
 #define RAIN_DROP_HASHSCALE1 .1031
 #define RAIN_DROP_HASHSCALE3 vec3(.1031, .1030, .0973)
@@ -1346,6 +1347,7 @@ void main() {
 		}
 		
 		ray.hitDistance = gl_HitTEXT;
+		ray.t2 = WATER_MAX_LIGHT_DEPTH;
 		ray.color.rgb = reflection * fresnel + refraction * (1-fresnel);
 		ray.normal = surfaceNormal;
 		
@@ -1394,6 +1396,7 @@ void main() {
 					ray.color.rgb *= pow(1.0 - clamp(ray.hitDistance / maxLightDepth, 0, 1), 2);
 				}
 				ray.hitDistance = distanceToSurface;
+				ray.t2 = max(distanceToSurface, maxRayDistance);
 				ray.normal = vec3(0,-1,0);
 				SetHitWater();
 				ray.renderableIndex = -1;
@@ -1414,6 +1417,7 @@ void main() {
 			RAY_RECURSION_POP
 			if (ray.hitDistance == -1) {
 				ray.hitDistance = maxLightDepth;
+				ray.t2 = maxLightDepth;
 				ray.color = vec4(0,0,0,1);
 				ray.normal = vec3(0);
 				SetHitWater();

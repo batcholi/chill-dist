@@ -1167,8 +1167,9 @@ const float EPSILON = 0.00001;
 #define WATER_INTERSECTION_UNDER 0
 #define WATER_INTERSECTION_ABOVE 1
 
-uint seed = InitRandomSeed(InitRandomSeed(gl_LaunchIDEXT.x, gl_LaunchIDEXT.y), uint(camera.frameIndex));
+uint stableSeed = InitRandomSeed(gl_LaunchIDEXT.x, gl_LaunchIDEXT.y);
 uint coherentSeed = InitRandomSeed(uint(camera.frameIndex),0);
+uint seed = InitRandomSeed(stableSeed, coherentSeed);
 CameraData cam = cameras[pushConstant.cameraIndex];
 
 #define MAX_GI_ACCUMULATION 400
@@ -1231,7 +1232,7 @@ float sdfSphere(vec3 p, float r) {
 }
 
 
-#line 304 "/home/olivier/projects/chill/src/v4d/modules/V4D_rays/assets/shaders/raytracing.glsl"
+#line 321 "/home/olivier/projects/chill/src/v4d/modules/V4D_rays/assets/shaders/raytracing.glsl"
 // void main() {
 // 	COMPUTE_BOX_INTERSECTION
 // 	if (T1 < T2 && T2 > 0) {
@@ -1274,7 +1275,7 @@ void ReportIntersection(in vec3 pos, in vec3 rayOrigin, in vec3 rayDir, in bvec3
 		const vec3 ttop = (pos - rayOrigin) / rayDir;
 		const vec3 tmin = min(ttop, tbot);
 		const vec3 tmax = max(ttop, tbot);
-		const float t1 = max(gl_RayTminEXT, max(tmin.x, max(tmin.y, tmin.z)));
+		const float t1 = max(tmin.x, max(tmin.y, tmin.z));
 		t2 = min(tmax.x, min(tmax.y, tmax.z));
 		// Store Normal Index in gl_HitKindEXT
 		uint8_t normalIndex = uint8_t(
@@ -1319,6 +1320,7 @@ void main() {
 	COMPUTE_BOX_INTERSECTION // retrieves T1 and T2
 	if (T1 < T2 && T2 > 0) {
 		bool rayIsGi = RAY_IS_GI;
+		bool rayIsShadow = RAY_IS_SHADOW;
 		ChunkVoxelData voxelData = chunk.voxels;
 		if (voxelData.voxelSize == 0) {
 			DEBUG_RAY_INT_TIME
@@ -1347,7 +1349,9 @@ void main() {
 				const uint64_t fill = voxelData.fill[voxelIndex];
 				if (fill != VOXEL_EMPTY) {
 					if (fill == VOXEL_FULL || !enableHdVoxels) {
-						ReportIntersection(vec3(iPos) * voxelData.voxelSize, rayOrigin, rayDir, bNormalMask, iStepDir, voxelData.voxelSize);
+						if (!rayIsShadow || voxelData.type[voxelIndex] != 0) {
+							ReportIntersection(vec3(iPos) * voxelData.voxelSize, rayOrigin, rayDir, bNormalMask, iStepDir, voxelData.voxelSize);
+						}
 						DEBUG_RAY_INT_TIME
 						return;
 					} else {

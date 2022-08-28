@@ -1167,8 +1167,9 @@ const float EPSILON = 0.00001;
 #define WATER_INTERSECTION_UNDER 0
 #define WATER_INTERSECTION_ABOVE 1
 
-uint seed = InitRandomSeed(InitRandomSeed(gl_LaunchIDEXT.x, gl_LaunchIDEXT.y), uint(camera.frameIndex));
+uint stableSeed = InitRandomSeed(gl_LaunchIDEXT.x, gl_LaunchIDEXT.y);
 uint coherentSeed = InitRandomSeed(uint(camera.frameIndex),0);
+uint seed = InitRandomSeed(stableSeed, coherentSeed);
 CameraData cam = cameras[pushConstant.cameraIndex];
 
 #define MAX_GI_ACCUMULATION 400
@@ -1231,7 +1232,7 @@ float sdfSphere(vec3 p, float r) {
 }
 
 
-#line 480 "/home/olivier/projects/chill/src/v4d/modules/V4D_rays/assets/shaders/raytracing.glsl"
+#line 500 "/home/olivier/projects/chill/src/v4d/modules/V4D_rays/assets/shaders/raytracing.glsl"
 
 hitAttributeEXT hit {
 	float t2;
@@ -1352,6 +1353,25 @@ void main() {
 	ChunkVoxelData voxelData = ChunkData(AABB.extra).voxels;
 	if (uint64_t(voxelData) == 0) return;
 	
+	// if (voxelData.type[voxelIndex] == 0) {
+	// 	if (RAY_RECURSIONS < RAY_MAX_RECURSION) {
+	// 		float _t2 = t2;
+	// 		RAY_RECURSION_PUSH
+	// 			for (int i = 0; i < 10 ; ++i) {
+	// 				traceRayEXT(tlas, 0, RENDERABLE_STANDARD, 0/*rayType*/, 0/*nbRayTypes*/, 0/*missIndex*/, gl_WorldRayOriginEXT, _t2 - EPSILON, gl_WorldRayDirectionEXT, cam.zFar, 0);
+	// 				if (ray.color.a > 0 || ray.hitDistance == -1) {
+	// 					break;
+	// 				}
+	// 				_t2 = ray.t2;
+	// 			}
+	// 			ray.t2 = max(ray.t2, _t2);
+	// 		RAY_RECURSION_POP
+	// 	} else {
+	// 		ray.color.a = 0;
+	// 	}
+	// 	return;
+	// }
+	
 	// Prapare Surface
 	surface.emission = vec3(0);
 	surface.metallic = 0;
@@ -1458,7 +1478,7 @@ void main() {
 	if (RAY_RECURSIONS < RAY_MAX_RECURSION) {
 	
 		// Direct Lighting
-		if ((WATER_LEVEL - localPosition.y) < WATER_MAX_LIGHT_DEPTH) {
+		if (!rayIsUnderWater || (WATER_LEVEL - localPosition.y) < WATER_MAX_LIGHT_DEPTH) {
 			vec3 color = ray.color.rgb;
 			ray.color = vec4(0);
 			vec3 sunDir = normalize(renderer.sunDir);
@@ -1526,7 +1546,7 @@ void main() {
 					vec3 t2Position = worldPosition + rayDirection * (refracted_t2 - t1);
 					if (Refract(rayDirection, thisSurface.normal, 1.0/thisSurface.ior)) {
 						RAY_RECURSION_PUSH
-							traceRayEXT(tlas, 0, RENDERABLE_STANDARD_EXCEPT_WATER, 0/*rayType*/, 0/*nbRayTypes*/, 0/*missIndex*/, t2Position, 0, rayDirection, cam.zFar, 0);
+							traceRayEXT(tlas, 0, RENDERABLE_STANDARD, 0/*rayType*/, 0/*nbRayTypes*/, 0/*missIndex*/, t2Position, 0, rayDirection, cam.zFar, 0);
 						RAY_RECURSION_POP
 						ray.color.rgb *= thisSurface.color.rgb * (1-thisSurface.color.a);
 					}
@@ -1590,5 +1610,5 @@ void main() {
 	}
 }
 
-#line 839 "/home/olivier/projects/chill/src/v4d/modules/V4D_rays/assets/shaders/raytracing.glsl"
+#line 878 "/home/olivier/projects/chill/src/v4d/modules/V4D_rays/assets/shaders/raytracing.glsl"
 

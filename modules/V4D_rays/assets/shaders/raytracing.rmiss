@@ -1167,8 +1167,9 @@ const float EPSILON = 0.00001;
 #define WATER_INTERSECTION_UNDER 0
 #define WATER_INTERSECTION_ABOVE 1
 
-uint seed = InitRandomSeed(InitRandomSeed(gl_LaunchIDEXT.x, gl_LaunchIDEXT.y), uint(camera.frameIndex));
+uint stableSeed = InitRandomSeed(gl_LaunchIDEXT.x, gl_LaunchIDEXT.y);
 uint coherentSeed = InitRandomSeed(uint(camera.frameIndex),0);
+uint seed = InitRandomSeed(stableSeed, coherentSeed);
 CameraData cam = cameras[pushConstant.cameraIndex];
 
 #define MAX_GI_ACCUMULATION 400
@@ -1231,12 +1232,13 @@ float sdfSphere(vec3 p, float r) {
 }
 
 
-#line 272 "/home/olivier/projects/chill/src/v4d/modules/V4D_rays/assets/shaders/raytracing.glsl"
+#line 288 "/home/olivier/projects/chill/src/v4d/modules/V4D_rays/assets/shaders/raytracing.glsl"
 void main() {
 	bool rayIsGi = RAY_IS_GI;
 	ray.color = vec4(renderer.skyLightColor * (rayIsGi? vec3(0.75,0.9,1.3) : vec3(0.5,0.6,1.5)), 1);
 	ray.normal = vec3(0);
 	ray.hitDistance = -1;
+	ray.t2 = camera.zFar;
 	ray.id = -1;
 	ray.renderableIndex = -1;
 	ray.geometryIndex = -1;

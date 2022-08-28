@@ -1167,8 +1167,9 @@ const float EPSILON = 0.00001;
 #define WATER_INTERSECTION_UNDER 0
 #define WATER_INTERSECTION_ABOVE 1
 
-uint seed = InitRandomSeed(InitRandomSeed(gl_LaunchIDEXT.x, gl_LaunchIDEXT.y), uint(camera.frameIndex));
+uint stableSeed = InitRandomSeed(gl_LaunchIDEXT.x, gl_LaunchIDEXT.y);
 uint coherentSeed = InitRandomSeed(uint(camera.frameIndex),0);
+uint seed = InitRandomSeed(stableSeed, coherentSeed);
 CameraData cam = cameras[pushConstant.cameraIndex];
 
 #define MAX_GI_ACCUMULATION 400
@@ -1231,7 +1232,7 @@ float sdfSphere(vec3 p, float r) {
 }
 
 
-#line 142 "/home/olivier/projects/chill/src/v4d/modules/V4D_rays/assets/shaders/raytracing.glsl"
+#line 143 "/home/olivier/projects/chill/src/v4d/modules/V4D_rays/assets/shaders/raytracing.glsl"
 void main() {
 	const ivec2 pixelInMiddleOfScreen = ivec2(gl_LaunchSizeEXT.xy) / 2;
 	const bool isMiddleOfScreen = (COORDS == pixelInMiddleOfScreen);
@@ -1254,11 +1255,26 @@ void main() {
 	bool hitSomething = ray.renderableIndex != -1;
 	vec3 motion;
 	float depth;
+	float visibility = 1;
 
 	bool rayIsUnderwater = RAY_IS_UNDERWATER;
-	if (rayIsUnderwater && ray.hitDistance >= WATER_MAX_LIGHT_DEPTH) {
-		hitSomething = false;
-	}
+	
+	// // Fog
+	// if (rayIsUnderwater) {
+	// 	if (ray.hitDistance >= WATER_MAX_LIGHT_DEPTH) {
+	// 		hitSomething = false;
+	// 	}
+	// 	visibility = 1-clamp(ray.hitDistance/WATER_MAX_LIGHT_DEPTH, 0, 1);
+	// } else if (hitSomething) {
+	// 	float dist = mix(0, ray.hitDistance, RandomFloat(seed));
+	// 	vec3 fogPosition = initialRayPosition + initialRayDirection * dist;
+	// 	RayPayload originalRay = ray;
+	// 	traceRayEXT(tlas, 0, RENDERABLE_STANDARD, 0/*rayType*/, 0/*nbRayTypes*/, 0/*missIndex*/, fogPosition, 0, renderer.sunDir, cam.zFar, 0);
+	// 	visibility = 1 - clamp(dist / mix(cam.zFar, 100, renderer.cloudDensity), 0, 1) * clamp(fogPosition.y / 512, 0, 1);
+	// 	visibility -= (ray.hitDistance == -1? 0 : clamp(ray.hitDistance / 100, 0, 1)) * 0.01;
+	// 	color.rgb = mix(renderer.skyLightColor, color.rgb, clamp(visibility, 0, 1));
+	// 	ray = originalRay;
+	// }
 	
 	// Aim
 	if (isMiddleOfScreen) {
@@ -1308,7 +1324,7 @@ void main() {
 	
 	switch (camera.debugViewMode) {
 		case RENDERER_DEBUG_MODE_NONE:
-			float ssaoStrength = rayIsUnderwater? (1-clamp(ray.hitDistance/WATER_MAX_LIGHT_DEPTH, 0, 1)) : 1;
+			float ssaoStrength = visibility;
 			imageStore(img_debug, COORDS, vec4(ray.normal, ssaoStrength));
 			break;
 		case RENDERER_DEBUG_MODE_NORMALS:

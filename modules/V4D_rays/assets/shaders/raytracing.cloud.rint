@@ -1167,8 +1167,9 @@ const float EPSILON = 0.00001;
 #define WATER_INTERSECTION_UNDER 0
 #define WATER_INTERSECTION_ABOVE 1
 
-uint seed = InitRandomSeed(InitRandomSeed(gl_LaunchIDEXT.x, gl_LaunchIDEXT.y), uint(camera.frameIndex));
+uint stableSeed = InitRandomSeed(gl_LaunchIDEXT.x, gl_LaunchIDEXT.y);
 uint coherentSeed = InitRandomSeed(uint(camera.frameIndex),0);
+uint seed = InitRandomSeed(stableSeed, coherentSeed);
 CameraData cam = cameras[pushConstant.cameraIndex];
 
 #define MAX_GI_ACCUMULATION 400
@@ -1231,14 +1232,15 @@ float sdfSphere(vec3 p, float r) {
 }
 
 
-#line 1074 "/home/olivier/projects/chill/src/v4d/modules/V4D_rays/assets/shaders/raytracing.glsl"
+#line 1121 "/home/olivier/projects/chill/src/v4d/modules/V4D_rays/assets/shaders/raytracing.glsl"
 
 hitAttributeEXT hit {
+	float density;
 	float t2;
 };
 
 void main() {
-	if (renderer.cloudDensity > 0.1) {
+	if (renderer.cloudDensity > 0) {
 		COMPUTE_BOX_INTERSECTION
 		
 		float t1 = max(gl_RayTminEXT, T1);
@@ -1246,17 +1248,12 @@ void main() {
 		vec3 start = gl_ObjectRayOriginEXT + gl_ObjectRayDirectionEXT * t1;
 		vec3 end = gl_ObjectRayOriginEXT + gl_ObjectRayDirectionEXT * t2;
 		
-		// const int MAX_STEPS = 1;
 		const float speed = 0.05;
-		float density = 0;
-		// for (int i = 0; i < MAX_STEPS; ++i) {
-			float time = float(renderer.timestamp*speed);
-			float t = 0.5;// (float(i)+0.5) / MAX_STEPS;
-			vec3 pos = mix(start, end, t) * 0.003;
-			density += SimplexFractal(pos + vec3(time, time * 0.3, 0), 3) + renderer.cloudDensity + 0.1;
-		// }
+		float time = float(renderer.timestamp*speed);
+		vec3 pos = mix(start, end, 0.5) * 0.003;
+		density = clamp(SimplexFractal(pos + vec3(time, time * 0.3, 0), 3) + renderer.cloudDensity * 2, 0, 1) * pow(renderer.cloudDensity, 0.25);
 		
-		if (density > (1-renderer.cloudDensity)) {
+		if (density > 0) {
 			reportIntersectionEXT(t1, 0);
 		}
 	}

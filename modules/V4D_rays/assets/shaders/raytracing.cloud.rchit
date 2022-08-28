@@ -1167,8 +1167,9 @@ const float EPSILON = 0.00001;
 #define WATER_INTERSECTION_UNDER 0
 #define WATER_INTERSECTION_ABOVE 1
 
-uint seed = InitRandomSeed(InitRandomSeed(gl_LaunchIDEXT.x, gl_LaunchIDEXT.y), uint(camera.frameIndex));
+uint stableSeed = InitRandomSeed(gl_LaunchIDEXT.x, gl_LaunchIDEXT.y);
 uint coherentSeed = InitRandomSeed(uint(camera.frameIndex),0);
+uint seed = InitRandomSeed(stableSeed, coherentSeed);
 CameraData cam = cameras[pushConstant.cameraIndex];
 
 #define MAX_GI_ACCUMULATION 400
@@ -1231,15 +1232,25 @@ float sdfSphere(vec3 p, float r) {
 }
 
 
-#line 1106 "/home/olivier/projects/chill/src/v4d/modules/V4D_rays/assets/shaders/raytracing.glsl"
+#line 1149 "/home/olivier/projects/chill/src/v4d/modules/V4D_rays/assets/shaders/raytracing.glsl"
 
 hitAttributeEXT hit {
+	float density;
 	float t2;
 };
 
 void main() {
+	vec3 color = renderer.skyLightColor;
 	
-	ray.color = vec4(renderer.skyLightColor, 0.5);
+	if (RAY_RECURSIONS < RAY_MAX_RECURSION && !RAY_IS_SHADOW && !RAY_IS_GI) {
+		RAY_RECURSION_PUSH
+			traceRayEXT(tlas, 0, RENDERABLE_STANDARD & ~RENDERABLE_MASK_CLOUD, 0/*rayType*/, 0/*nbRayTypes*/, 0/*missIndex*/, gl_WorldRayOriginEXT, t2, gl_WorldRayDirectionEXT, cam.zFar, 0);
+		RAY_RECURSION_POP
+		color *= density;
+		color += ray.color.rgb * (1-density);
+	}
+	
+	ray.color = vec4(color, density);
 	ray.normal = vec3(0);
 	ray.localPosition = gl_ObjectRayOriginEXT + gl_ObjectRayDirectionEXT * gl_HitTEXT;
 	ray.worldPosition = gl_WorldRayOriginEXT + gl_WorldRayDirectionEXT * gl_HitTEXT;
